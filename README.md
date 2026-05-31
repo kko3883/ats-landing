@@ -1,4 +1,4 @@
-# copperplate ATS
+# ATS — coolpaperplane.win
 
 Automated Trading System — three-bucket strategy (Base Yield / Alpha / Convexity) executing on Interactive Brokers.
 
@@ -7,7 +7,7 @@ Automated Trading System — three-bucket strategy (Base Yield / Alpha / Convexi
 - **Frontend:** Next.js 15 + TailwindCSS 3
 - **Backend:** Supabase (PostgreSQL + real-time subscriptions)
 - **Hosting:** Vercel
-- **Domain:** `ats.copperplate.win`
+- **Domain:** `ats.coolpaperplane.win`
 
 ## Local Development
 

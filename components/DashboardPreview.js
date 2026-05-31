@@ -20,7 +20,7 @@ export default function DashboardPreview() {
                   <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50" />
                   <div className="w-2.5 h-2.5 rounded-full bg-green-500/50" />
                 </div>
-                <span className="text-xs text-market-500 font-mono">dashboard.copperplate.win</span>
+                <span className="text-xs text-market-500 font-mono">ats.coolpaperplane.win/dashboard</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />

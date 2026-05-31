@@ -7,7 +7,7 @@ export default function Layout({ children }) {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center text-white font-bold text-xs">
               ATS
             </div>
-            <span className="font-semibold text-lg tracking-tight text-white">copperplate</span>
+            <span className="font-semibold text-lg tracking-tight text-white">ATS</span>
           </div>
 
           <div className="flex items-center gap-6">
@@ -32,10 +32,10 @@ export default function Layout({ children }) {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2 text-sm text-market-400">
             <div className="w-5 h-5 rounded bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center text-white font-bold text-[8px]">A</div>
-            <span>copperplate ATS</span>
+            <span>ATS — coolpaperplane.win</span>
           </div>
           <div className="text-xs text-market-500">
-            &copy; {new Date().getFullYear()} copperplate.win
+            &copy; {new Date().getFullYear()} coolpaperplane.win
           </div>
         </div>
       </footer>

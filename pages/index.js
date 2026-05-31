@@ -13,10 +13,10 @@ export default function Home() {
       {/* About */}
       <section id="about" className="border-t border-market-800/30">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
-          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-6">About copperplate ATS</h2>
+          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-6">About ATS</h2>
           <div className="text-market-300 space-y-4 text-left leading-relaxed">
             <p>
-              copperplate is a systematic multi-basket trading system operating on
+              This is a systematic multi-basket trading system operating on
               Interactive Brokers. It splits capital across three strategy buckets —
               <strong className="text-white"> Base Yield</strong>, <strong className="text-white">Alpha</strong>, and
               <strong className="text-white"> Convexity</strong> — each targeting a distinct
