@@ -39,9 +39,10 @@ const NYSE_TICKERS = new Set([
 ])
 
 function toTradingViewSymbol(symbol) {
-  // "2382.HK" → "HKEX:2382"
+  // "2382.HK" → "2382" → TradingView auto-resolves on HKEX
   if (symbol.endsWith('.HK')) {
-    return `HKEX:${symbol.replace(/\.HK$/, '')}`
+    // Strip .HK suffix — TradingView understands the bare HK code
+    return symbol.replace(/\.HK$/, '')
   }
   // US tickers → prefix with exchange for reliable resolution
   const exchange = NYSE_TICKERS.has(symbol) ? 'NYSE' : 'NASDAQ'
@@ -293,7 +294,19 @@ export default function Dashboard() {
       .order('created_at', { ascending: false })
       .limit(50)
       .then(({ data, error }) => {
-        if (!error && data) setSignals(data)
+        if (!error && data) {
+          // Dedup: keep only the latest signal per ticker
+          const seen = new Set()
+          const unique = []
+          for (const row of data) {
+            const key = row.ticker
+            if (!seen.has(key)) {
+              seen.add(key)
+              unique.push(row)
+            }
+          }
+          setSignals(unique)
+        }
       })
 
     supabase
@@ -308,12 +321,19 @@ export default function Dashboard() {
         }
         setLoading(false)
       })
-
+    // Real-time: listen for new signals (dedup by ticker)
     const channel = supabase
       .channel('signals')
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'signals' },
-        (payload) => setSignals(prev => [payload.new, ...prev])
+        (payload) => setSignals(prev => {
+          const existing = prev.find(s => s.ticker === payload.new.ticker)
+          if (existing) {
+            // Replace outdated signal with newer one
+            return prev.map(s => s.ticker === payload.new.ticker ? payload.new : s)
+          }
+          return [payload.new, ...prev]
+        })
       )
       .subscribe()
 
