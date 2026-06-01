@@ -26,18 +26,26 @@ const VIX_ZONE_LABELS = {
   defensive: { label: 'Defensive', color: 'text-emerald-300' },
 }
 
-// ── HK Symbol → TradingView ─────────────────────────────────────────────
+// ── Symbol → TradingView ─────────────────────────────────────────────
 
 function toTradingViewSymbol(symbol) {
   // "2382.HK" → "HKEX:2382"
-  const code = symbol.replace(/\.HK$/, '')
-  return `HKEX:${code}`
+  if (symbol.endsWith('.HK')) {
+    return `HKEX:${symbol.replace(/\.HK$/, '')}`
+  }
+  // US tickers (DELL, SMCI, etc.) → TradingView auto-resolves them
+  return symbol
+}
+
+function isHkSymbol(symbol) {
+  return symbol.endsWith('.HK')
 }
 
 // ── TradingView Chart Modal ──────────────────────────────────────────────
 
 function ChartModal({ symbol, onClose }) {
   const tvSymbol = toTradingViewSymbol(symbol)
+  const hk = isHkSymbol(symbol)
   const containerId = `tv_chart_${symbol.replace(/[^a-zA-Z0-9]/g, '_')}`
 
   useEffect(() => {
@@ -61,7 +69,7 @@ function ChartModal({ symbol, onClose }) {
           container_id: containerId,
           symbol: tvSymbol,
           interval: 'D',
-          timezone: 'Asia/Hong_Kong',
+          timezone: hk ? 'Asia/Hong_Kong' : 'America/New_York',
           theme: 'dark',
           style: '1', // Candlesticks
           locale: 'en',
@@ -151,16 +159,25 @@ function ChartModal({ symbol, onClose }) {
 
 // ── Card Components ─────────────────────────────────────────────────────
 
-function SignalCard({ signal }) {
+function SignalCard({ signal, onChart }) {
   const bucket = signal.bucket || 'alpha'
   const style = BUCKET_COLORS[bucket] || BUCKET_COLORS.alpha
   const meta = signal.signal_json || {}
   const ctx = meta.context || {}
+  const ticker = signal.ticker
 
   return (
-    <div className={`${style.bg} ${style.border} border rounded-lg p-4`}>
+    <div
+      className={`${style.bg} ${style.border} border rounded-lg p-4 cursor-pointer transition-colors group hover:brightness-110`}
+      onClick={() => onChart?.(ticker)}
+    >
       <div className="flex items-center justify-between mb-2">
-        <span className="text-lg font-bold text-white">{signal.ticker}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-lg font-bold text-white">{ticker}</span>
+          <svg className="w-4 h-4 text-market-500 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+          </svg>
+        </div>
         <span className={`text-xs font-mono px-2 py-0.5 rounded-full ${signal.direction === 'LONG' ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
           {signal.direction}
         </span>
@@ -226,13 +243,13 @@ function HkCard({ symbol, candidate_type, rs_zscore, beta_group, onChart }) {
   )
 }
 
-function BucketSection({ title, signals, style }) {
+function BucketSection({ title, signals, style, onChart }) {
   if (!signals || signals.length === 0) return null
   return (
     <div className="mb-6">
       <h3 className={`text-sm font-semibold uppercase tracking-wider mb-3 ${style.text}`}>{title} ({signals.length})</h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {signals.map(s => <SignalCard key={s.id} signal={s} />)}
+        {signals.map(s => <SignalCard key={s.id} signal={s} onChart={onChart} />)}
       </div>
     </div>
   )
@@ -376,7 +393,7 @@ export default function Dashboard() {
           <div>
             <div className="mb-2">
               <h2 className="text-lg font-semibold text-white">US Signals</h2>
-              <p className="text-xs text-market-500 mb-4">From signal engine · Auto-refreshes in real-time</p>
+              <p className="text-xs text-market-500 mb-4">From signal engine · Click any ticker for chart · Auto-refreshes in real-time</p>
             </div>
 
             {signals.length === 0 ? (
@@ -390,6 +407,7 @@ export default function Dashboard() {
                   title={VIX_ZONE_LABELS[zone]?.label || zone}
                   signals={byVixZone[zone] || []}
                   style={BUCKET_COLORS.alpha}
+                  onChart={openChart}
                 />
               ))
             )}
@@ -399,6 +417,7 @@ export default function Dashboard() {
                 title="Other"
                 signals={byVixZone['unknown']}
                 style={BUCKET_COLORS.convexity}
+                onChart={openChart}
               />
             )}
           </div>
