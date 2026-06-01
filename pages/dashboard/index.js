@@ -365,7 +365,7 @@ function SignalCard({ signal, onChart, stockNames, ind, held }) {
           {name && <span className="text-[10px] text-market-500 truncate hidden sm:block">{name}</span>}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <AlignmentBadge direction={direction} indicatorSignal={ind?.composite_signal} />
+          <AlignmentBadge direction={signal.direction} indicatorSignal={ind?.composite_signal} />
           <CompositeBadge signal={ind?.composite_signal} />
           <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${signal.direction === 'LONG' ? 'bg-emerald-800/50 text-emerald-200' : 'bg-red-800/50 text-red-200'}`}>
             {signal.direction}
