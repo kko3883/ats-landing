@@ -25,13 +25,14 @@ const NYSE_TICKERS = new Set([
 const HKEX_FALLBACK = new Set(['1928'])
 
 function toTradingViewSymbol(symbol) {
+  // Strip .US or .HK suffix for TradingView symbol resolution
+  const bare = symbol.replace(/\.(US|HK)$/, '')
   if (symbol.endsWith('.HK')) {
-    const code = symbol.replace(/\.HK$/, '')
-    if (HKEX_FALLBACK.has(code)) return `HKEX:${code}`
-    return symbol
+    if (HKEX_FALLBACK.has(bare)) return `HKEX:${bare}`
+    return `${bare}.HK`
   }
-  const exchange = NYSE_TICKERS.has(symbol) ? 'NYSE' : 'NASDAQ'
-  const tvSymbol = symbol === 'BRK-B' ? 'BRK.B' : symbol
+  const exchange = NYSE_TICKERS.has(bare) ? 'NYSE' : 'NASDAQ'
+  const tvSymbol = bare === 'BRK-B' ? 'BRK.B' : bare
   return `${exchange}:${tvSymbol}`
 }
 
@@ -144,6 +145,16 @@ function sgn(v) {
   return v > 0 ? '+' : ''
 }
 
+const INDICATOR_ROWS = [
+  { key: 'macd_value', type: 'macd', label: 'MACD' },
+  { key: 'adx_value', type: 'adx', label: 'ADX' },
+  { key: 'rsi_value', type: 'rsi', label: 'RSI' },
+  { key: 'stoch_k', type: 'stoch', label: 'Stoch' },
+  { key: 'mfi_value', type: 'mfi', label: 'MFI' },
+  { key: 'obv_slope', type: 'obv', label: 'OBV' },
+  { key: 'bb_percent_b', type: 'bb', label: '%B' },
+]
+
 function IndicatorBar({ rawValue, type, label }) {
   const score = normScore(rawValue, type)
   if (score == null || isNaN(score)) return null
@@ -152,17 +163,17 @@ function IndicatorBar({ rawValue, type, label }) {
   const isSell = score < -1
   const barBg = isBuy ? 'bg-emerald-600' : isSell ? 'bg-red-600' : 'bg-market-500'
   return (
-    <div className="flex items-center gap-1.5 text-[11px]">
-      <span className="w-8 text-market-400 text-right font-mono shrink-0">{label}</span>
-      <div className="flex-1 h-3 bg-market-800 rounded-sm relative overflow-hidden">
-        <div className="absolute left-1/2 top-0 bottom-0 w-px bg-market-600 z-10" />
+    <div className="flex items-center gap-1 text-[10px]">
+      <span className="w-8 text-market-500 text-right font-mono shrink-0">{label}</span>
+      <div className="flex-1 h-2 bg-market-800 rounded-sm relative overflow-hidden">
+        <div className="absolute left-1/2 top-0 bottom-0 w-px bg-market-600/50 z-10" />
         <div className={`absolute top-0 bottom-0 ${barBg} rounded-sm`}
           style={score >= 0
             ? { left: '50%', width: `${pct - 50}%` }
             : { right: `${100 - pct}%`, width: `${50 - pct}%` }
           } />
       </div>
-      <span className={`w-10 text-right font-mono ${isBuy ? 'text-emerald-300' : isSell ? 'text-red-300' : 'text-market-300'}`}>
+      <span className={`w-9 text-right font-mono ${isBuy ? 'text-emerald-300' : isSell ? 'text-red-300' : 'text-market-400'}`}>
         {sgn(score)}{score.toFixed(1)}
       </span>
     </div>
@@ -171,18 +182,8 @@ function IndicatorBar({ rawValue, type, label }) {
 
 function IndicatorPanel({ ind }) {
   if (!ind) return (
-    <div className="text-[11px] text-market-500 text-center py-2 italic">No 1h indicator data</div>
+    <div className="text-[10px] text-market-600 text-center py-1 italic">No 1h indicator data</div>
   )
-
-  const rows = [
-    { key: 'macd_value', type: 'macd', label: 'MACD' },
-    { key: 'adx_value', type: 'adx', label: 'ADX' },
-    { key: 'rsi_value', type: 'rsi', label: 'RSI' },
-    { key: 'stoch_k', type: 'stoch', label: 'Stoch' },
-    { key: 'mfi_value', type: 'mfi', label: 'MFI' },
-    { key: 'obv_slope', type: 'obv', label: 'OBV' },
-    { key: 'bb_percent_b', type: 'bb', label: '%B' },
-  ]
 
   const comp = ind.composite_signal || 'hold'
   const cfg = COMPOSITE_CFG[comp] || COMPOSITE_CFG.hold
@@ -190,39 +191,25 @@ function IndicatorPanel({ ind }) {
   const compPct = (compScore + 7) / 14 * 100
 
   return (
-    <div className="space-y-0.5 mt-1.5">
-      <div className="text-[10px] text-market-500 uppercase tracking-wider mb-1">Indicators (1h)</div>
-      {rows.map(({ key, type, label }) => (
+    <div className="space-y-0.5">
+      {INDICATOR_ROWS.map(({ key, type, label }) => (
         <IndicatorBar key={key} rawValue={ind[key]} type={type} label={label} />
       ))}
-      <div className="flex items-center gap-1.5 text-[11px] mt-1.5 pt-1.5 border-t border-market-800">
-        <span className="w-8 text-market-300 text-right font-mono shrink-0 text-[10px]">Cmp</span>
-        <div className="flex-1 h-3.5 bg-market-800 rounded-sm relative overflow-hidden">
-          <div className="absolute left-1/2 top-0 bottom-0 w-px bg-market-600 z-10" />
+      {/* Composite bar */}
+      <div className="flex items-center gap-1 text-[10px] pt-1 mt-0.5 border-t border-market-800/50">
+        <span className="w-8 text-market-400 text-right font-mono font-bold shrink-0">Cmp</span>
+        <div className="flex-1 h-2.5 bg-market-800 rounded-sm relative overflow-hidden">
+          <div className="absolute left-1/2 top-0 bottom-0 w-px bg-market-600/50 z-10" />
           <div className={`absolute top-0 bottom-0 ${cfg.bar} rounded-sm`}
             style={compScore >= 0
               ? { left: '50%', width: `${compPct - 50}%` }
               : { right: `${100 - compPct}%`, width: `${50 - compPct}%` }
             } />
         </div>
-        <span className={`w-10 text-right font-mono font-bold ${cfg.color}`}>
+        <span className={`w-9 text-right font-mono font-bold ${cfg.color}`}>
           {sgn(compScore)}{compScore}
         </span>
       </div>
-      <div className="text-[9px] text-market-600 text-center mt-0.5">
-        {rows.map(({ key, type, label }) => {
-          const v = ind[key]
-          if (v == null) return null
-          return <span key={key} className="mr-2">{label}: {typeof v === 'number' ? (Math.abs(v) < 100 ? v.toFixed(2) : v.toFixed(0)) : v}</span>
-        })}
-      </div>
-      {ind.atr_value != null && (
-        <div className="text-[10px] text-market-400 text-center mt-1 pt-1 border-t border-market-800/50">
-          ATR: <span className="text-market-300">${ind.atr_value.toFixed(2)}</span>
-          {' · '}Stop: <span className="text-red-400">${ind.stop_loss?.toFixed(2) ?? '—'}</span>
-          {' · '}Target: <span className="text-emerald-400">${ind.take_profit?.toFixed(2) ?? '—'}</span>
-        </div>
-      )}
     </div>
   )
 }
@@ -350,114 +337,147 @@ function UnifiedCard({ item, onChart, stockNames, onRsInfo, ind }) {
 
   // Colour by direction: LONG=emerald, HOLD=blue, SHORT=red
   const colors = isLong
-    ? { bg: 'bg-emerald-900/20', border: 'border-emerald-700/40', hover: 'hover:bg-emerald-900/40' }
+    ? { bg: 'bg-emerald-900/15', border: 'border-emerald-700/30', hover: 'hover:bg-emerald-900/30', accent: 'text-emerald-400', accentBg: 'bg-emerald-800/40' }
     : isShort
-    ? { bg: 'bg-red-900/20', border: 'border-red-700/40', hover: 'hover:bg-red-900/40' }
-    : { bg: 'bg-blue-900/20', border: 'border-blue-700/40', hover: 'hover:bg-blue-900/30' }
+    ? { bg: 'bg-red-900/15', border: 'border-red-700/30', hover: 'hover:bg-red-900/30', accent: 'text-red-400', accentBg: 'bg-red-800/40' }
+    : { bg: 'bg-blue-900/15', border: 'border-blue-700/30', hover: 'hover:bg-blue-900/25', accent: 'text-blue-400', accentBg: 'bg-blue-800/40' }
 
-  const vixLabel = VIX_ZONE_LABELS[vix_zone]?.label || vix_zone || '—'
-  const bktLabel = BUCKET_LABELS[bucket] || bucket || '—'
+  // ── Derived display values ──
+  const vixLabel = VIX_ZONE_LABELS[vix_zone]?.label || vix_zone || ''
+  const vixColor = VIX_ZONE_LABELS[vix_zone]?.color || 'text-market-300'
+  const bktLabel = BUCKET_LABELS[bucket] || bucket || ''
+  const groupLabel = group ? group.replace(/_/g, ' ') : ''
+  const betaGroupLabel = beta_group ? beta_group.replace('group_', '').replace(/_/g, ' ') : ''
+
+  // ── Price block: Price + ATR + Stop + Target in one compact row ──
+  const hasPrice = price != null
+  const hasAtr = ind?.atr_value != null
+  const hasStop = ind?.stop_loss != null
+  const hasTarget = ind?.take_profit != null
+  const hasPriceBlock = hasPrice || hasAtr || hasStop || hasTarget
+
+  // ── Screener fields for the data grid ──
+  const screenerFields = [
+    vix_zone ? { label: 'VIX Zone', display: vixLabel, color: vixColor } : null,
+    bucket ? { label: 'Bucket', display: bktLabel, color: colors.accent } : null,
+    group ? { label: 'Group', display: groupLabel, color: 'text-market-300' } : null,
+    qty != null ? { label: 'Qty', display: qty, color: 'text-white' } : null,
+    rs_zscore != null ? {
+      label: 'RS Z',
+      display: `${rs_zscore > 0 ? '+' : ''}${typeof rs_zscore === 'number' ? rs_zscore.toFixed(2) : rs_zscore}`,
+      color: isLong ? 'text-emerald-300' : isShort ? 'text-red-300' : 'text-market-300',
+      isRsZ: true,
+    } : null,
+    beta_vix != null ? {
+      label: 'VIX β',
+      display: `${beta_vix > 0 ? '+' : ''}${typeof beta_vix === 'number' ? beta_vix.toFixed(2) : beta_vix}`,
+      color: beta_vix < 0 ? 'text-rose-300' : 'text-emerald-300',
+    } : null,
+    beta_dxy != null ? {
+      label: 'DXY β',
+      display: `${beta_dxy > 0 ? '+' : ''}${typeof beta_dxy === 'number' ? beta_dxy.toFixed(2) : beta_dxy}`,
+      color: beta_dxy < 0 ? 'text-rose-300' : 'text-emerald-300',
+    } : null,
+    beta_group ? { label: 'β Group', display: betaGroupLabel, color: 'text-market-300' } : null,
+  ].filter(Boolean)
 
   return (
     <div
       className={`${colors.bg} ${colors.border} ${colors.hover} border rounded-lg p-3 cursor-pointer transition-colors group`}
       onClick={() => onChart?.(ticker)}
     >
-      {/* Header: ticker + badges */}
+      {/* ═══ Header: ticker + name + badges ═══ */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="font-bold text-white text-sm truncate">{ticker}</span>
-          {isHeld && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-blue-800/40 text-blue-300 shrink-0">Held</span>}
-          {name && <span className="text-[10px] text-market-500 truncate hidden sm:block">{name}</span>}
+          {name && (
+            <span className="text-[10px] text-market-500 truncate hidden sm:inline">{name}</span>
+          )}
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {ind?.composite_signal && <AlignmentBadge direction={direction} indicatorSignal={ind.composite_signal} />}
-          {ind?.composite_signal && <CompositeBadge signal={ind.composite_signal} />}
-          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-            isLong ? 'bg-emerald-800/50 text-emerald-200' :
-            isShort ? 'bg-red-800/50 text-red-200' :
-            'bg-blue-800/50 text-blue-200'
-          }`}>
+        <div className="flex items-center gap-1 shrink-0">
+          {isHeld && (
+            <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-blue-800/40 text-blue-300 shrink-0">Held</span>
+          )}
+          {ind?.composite_signal && (
+            <AlignmentBadge direction={direction} indicatorSignal={ind.composite_signal} />
+          )}
+          {ind?.composite_signal && (
+            <CompositeBadge signal={ind.composite_signal} />
+          )}
+          <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${colors.accentBg} ${colors.accent}`}>
             {direction}
           </span>
         </div>
       </div>
 
-      {/* Two-column: screener data | technical indicators */}
-      <div className="flex gap-2">
-        <div className="w-24 shrink-0 space-y-1 text-[10px]">
-          {vix_zone && (
-            <div className="flex justify-between text-market-400">
-              <span>VIX Zone</span>
-              <span className="text-market-300">{vixLabel}</span>
-            </div>
-          )}
-          {bucket && (
-            <div className="flex justify-between text-market-400">
-              <span>Bucket</span>
-              <span className={colors.border.replace('border-', 'text-').replace('/40', '') || 'text-market-300'}>{bktLabel}</span>
-            </div>
-          )}
-          {group && (
-            <div className="flex justify-between text-market-400">
-              <span>Group</span>
-              <span className="text-market-300">{group.replace(/_/g, ' ')}</span>
-            </div>
-          )}
-          {price != null && (
-            <div className="flex justify-between text-market-400">
-              <span>Price</span>
-              <span className="text-white">${typeof price === 'number' ? price.toFixed(2) : price}</span>
-            </div>
-          )}
-          {qty != null && (
-            <div className="flex justify-between text-market-400">
-              <span>Qty</span>
-              <span className="text-white">{qty}</span>
-            </div>
-          )}
-          {rs_zscore != null && (
-            <div className="flex items-center justify-between text-market-400">
-              <span className="flex items-center gap-0.5">
-                RS Z
-                <button onClick={(e) => { e.stopPropagation(); onRsInfo?.(); }} className="text-market-500 hover:text-market-300 leading-none">
-                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </button>
+      {/* ═══ Price Info Block: Price · ATR · Stop · Target ═══ */}
+      {hasPriceBlock && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mb-2 px-2 py-1.5 rounded bg-market-800/40 text-[11px]">
+          {hasPrice && (
+            <span className="inline-flex items-center gap-1">
+              <span className="text-market-500">Price</span>
+              <span className="text-white font-mono font-semibold">
+                ${typeof price === 'number' ? price.toFixed(2) : price}
               </span>
-              <span className={isLong ? 'text-emerald-300' : isShort ? 'text-red-300' : 'text-market-300'}>
-                {rs_zscore > 0 ? '+' : ''}{typeof rs_zscore === 'number' ? rs_zscore.toFixed(2) : rs_zscore}
-              </span>
-            </div>
+            </span>
           )}
-          {beta_vix != null && (
-            <div className="flex justify-between text-market-400">
-              <span>VIX β</span>
-              <span className={beta_vix < 0 ? 'text-rose-300' : 'text-emerald-300'}>
-                {beta_vix > 0 ? '+' : ''}{typeof beta_vix === 'number' ? beta_vix.toFixed(2) : beta_vix}
-              </span>
-            </div>
+          {hasAtr && (
+            <span className="inline-flex items-center gap-1">
+              <span className="text-market-500">ATR</span>
+              <span className="text-market-300 font-mono">${ind.atr_value.toFixed(2)}</span>
+            </span>
           )}
-          {beta_dxy != null && (
-            <div className="flex justify-between text-market-400">
-              <span>DXY β</span>
-              <span className={beta_dxy < 0 ? 'text-rose-300' : 'text-emerald-300'}>
-                {beta_dxy > 0 ? '+' : ''}{typeof beta_dxy === 'number' ? beta_dxy.toFixed(2) : beta_dxy}
-              </span>
-            </div>
+          {hasStop && (
+            <span className="inline-flex items-center gap-1">
+              <span className="text-market-500">Stop</span>
+              <span className="text-red-400 font-mono">${ind.stop_loss.toFixed(2)}</span>
+            </span>
           )}
-          {beta_group && (
-            <div className="flex justify-between text-market-400">
-              <span>Group</span>
-              <span className="text-market-300">{beta_group.replace('group_', '').replace(/_/g, ' ')}</span>
-            </div>
+          {hasTarget && (
+            <span className="inline-flex items-center gap-1">
+              <span className="text-market-500">Target</span>
+              <span className="text-emerald-400 font-mono">${ind.take_profit.toFixed(2)}</span>
+            </span>
           )}
         </div>
-        <div className="flex-1 min-w-0">
-          <IndicatorPanel ind={ind} />
+      )}
+
+      {/* ═══ Screener Data Grid: proper columns ═══ */}
+      {screenerFields.length > 0 && (
+        <div className="mb-2">
+          <div className="grid gap-y-0.5 text-[10px]" style={{ gridTemplateColumns: 'auto 1fr' }}>
+            {screenerFields.map((f, i) => (
+              <div key={i} className="contents">
+                <span className="text-market-500 text-right pr-2 whitespace-nowrap self-start pt-px">
+                  {f.isRsZ ? (
+                    <span className="inline-flex items-center gap-0.5">
+                      RS Z
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onRsInfo?.(); }}
+                        className="text-market-600 hover:text-market-300 leading-none"
+                        title="What is RS Z-Score?"
+                      >
+                        <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </button>
+                    </span>
+                  ) : (
+                    f.label
+                  )}
+                </span>
+                <span className={`${f.color} font-mono`}>{f.display}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ═══ Divider ═══ */}
+      <div className="border-t border-market-800/50 -mx-1 mb-1.5" />
+
+      {/* ═══ Indicator Bars: 7 compact bars + composite ═══ */}
+      <IndicatorPanel ind={ind} />
     </div>
   )
 }
@@ -471,9 +491,9 @@ function Section({ title, items, onChart, stockNames, onRsInfo, indicators }) {
     title === 'Short' ? 'text-red-400' :
     'text-blue-400'
   return (
-    <div className="mb-6">
+    <div className="mb-8">
       <h2 className={`text-sm font-semibold uppercase tracking-wider mb-3 ${headerColor}`}>
-        {title} ({items.length})
+        {title} <span className="text-market-500 font-normal">({items.length})</span>
       </h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {items.map(item => (
