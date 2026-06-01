@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import supabase from '../../lib/supabase'
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -13,11 +13,6 @@ function groupBy(arr, keyFn) {
   return map
 }
 
-function signalType(signal) {
-  const dir = (signal.direction || '').toLowerCase()
-  return dir === 'long' ? 'LONG' : dir === 'short' ? 'SHORT' : 'NEUTRAL'
-}
-
 const BUCKET_COLORS = {
   base_yield: { bg: 'bg-blue-900/30', border: 'border-blue-700/50', text: 'text-blue-300' },
   alpha: { bg: 'bg-purple-900/30', border: 'border-purple-700/50', text: 'text-purple-300' },
@@ -29,6 +24,129 @@ const VIX_ZONE_LABELS = {
   moderate_beta: { label: 'Moderate Growth', color: 'text-orange-300' },
   low_beta: { label: 'Neutral', color: 'text-yellow-300' },
   defensive: { label: 'Defensive', color: 'text-emerald-300' },
+}
+
+// ── HK Symbol → TradingView ─────────────────────────────────────────────
+
+function toTradingViewSymbol(symbol) {
+  // "2382.HK" → "HKEX:2382"
+  const code = symbol.replace(/\.HK$/, '')
+  return `HKEX:${code}`
+}
+
+// ── TradingView Chart Modal ──────────────────────────────────────────────
+
+function ChartModal({ symbol, onClose }) {
+  const tvSymbol = toTradingViewSymbol(symbol)
+  const containerId = `tv_chart_${symbol.replace(/[^a-zA-Z0-9]/g, '_')}`
+
+  useEffect(() => {
+    // Load TradingView script if not already loaded
+    if (!document.getElementById('tv_script')) {
+      const script = document.createElement('script')
+      script.id = 'tv_script'
+      script.src = 'https://s3.tradingview.com/tv.js'
+      script.async = true
+      document.body.appendChild(script)
+    }
+
+    // Wait for TV to be ready, then create widget
+    const initWidget = () => {
+      if (typeof window.TradingView !== 'undefined') {
+        // Hide loading placeholder before widget starts rendering
+        const loadingEl = document.getElementById(`${containerId}_loading`)
+        if (loadingEl) loadingEl.style.display = 'none'
+
+        new window.TradingView.widget({
+          container_id: containerId,
+          symbol: tvSymbol,
+          interval: 'D',
+          timezone: 'Asia/Hong_Kong',
+          theme: 'dark',
+          style: '1', // Candlesticks
+          locale: 'en',
+          toolbar_bg: '#0d1117',
+          enable_publishing: false,
+          hide_side_toolbar: false,
+          allow_symbol_change: false,
+          save_image: false,
+          width: '100%',
+          height: 480,
+          studies: [
+            'RSI@tv-basicstudies',
+            'MASimple@tv-basicstudies',
+          ],
+          studies_overrides: {
+            'MASimple.length': 50,
+          },
+        })
+      } else {
+        setTimeout(initWidget, 500)
+      }
+    }
+
+    const checkInterval = setInterval(() => {
+      if (typeof window.TradingView !== 'undefined') {
+        clearInterval(checkInterval)
+        initWidget()
+      }
+    }, 200)
+
+    // Timeout after 10s
+    setTimeout(() => clearInterval(checkInterval), 10000)
+
+    return () => {
+      clearInterval(checkInterval)
+      // Cleanup widget container
+      const container = document.getElementById(containerId)
+      if (container) container.innerHTML = ''
+    }
+  }, [tvSymbol, containerId])
+
+  // Close on Escape key
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+         onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-market-900 border border-market-700 rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-market-700">
+          <div>
+            <h2 className="text-lg font-bold text-white">{symbol}</h2>
+            <p className="text-xs text-market-400">{tvSymbol} · Daily · Candlestick</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-market-400 hover:text-white transition-colors p-1"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Chart container */}
+        <div
+          id={containerId}
+          className="w-full"
+          style={{ minHeight: '480px' }}
+        />
+
+        {/* Loading placeholder */}
+        <div className="flex items-center justify-center py-20 text-market-500 text-sm" id={`${containerId}_loading`}>
+          <div className="text-center">
+            <div className="animate-spin inline-block w-6 h-6 border-2 border-market-600 border-t-blue-500 rounded-full mb-3" />
+            <p>Loading chart...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ── Card Components ─────────────────────────────────────────────────────
@@ -76,12 +194,20 @@ function SignalCard({ signal }) {
   )
 }
 
-function HkCard({ symbol, candidate_type, rs_zscore, beta_group }) {
+function HkCard({ symbol, candidate_type, rs_zscore, beta_group, onChart }) {
   const isLong = candidate_type === 'long'
   return (
-    <div className={`${isLong ? 'bg-emerald-900/20 border-emerald-700/40' : 'bg-red-900/20 border-red-700/40'} border rounded-lg p-3`}>
+    <div
+      className={`${isLong ? 'bg-emerald-900/20 border-emerald-700/40 hover:bg-emerald-900/40' : 'bg-red-900/20 border-red-700/40 hover:bg-red-900/40'} border rounded-lg p-3 cursor-pointer transition-colors group`}
+      onClick={() => onChart?.(symbol)}
+    >
       <div className="flex items-center justify-between mb-1">
-        <span className="font-bold text-white">{symbol}</span>
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-white">{symbol}</span>
+          <svg className="w-3.5 h-3.5 text-market-500 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+          </svg>
+        </div>
         <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${isLong ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
           {isLong ? 'LONG' : 'SHORT'}
         </span>
@@ -119,7 +245,8 @@ export default function Dashboard() {
   const [signals, setSignals] = useState([])
   const [hkWatchlist, setHkWatchlist] = useState([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState('all') // 'all' | 'us' | 'hk'
+  const [tab, setTab] = useState('all')
+  const [chartSymbol, setChartSymbol] = useState(null) // symbol to show chart for, or null
 
   useEffect(() => {
     if (!supabase) {
@@ -130,7 +257,6 @@ export default function Dashboard() {
 
     setConnected(true)
 
-    // Fetch latest signals
     supabase
       .from('signals')
       .select('*')
@@ -140,7 +266,6 @@ export default function Dashboard() {
         if (!error && data) setSignals(data)
       })
 
-    // Fetch latest HK watchlist (most recent batch by generated_at)
     supabase
       .from('watchlist_hk')
       .select('*')
@@ -148,14 +273,12 @@ export default function Dashboard() {
       .limit(50)
       .then(({ data, error }) => {
         if (!error && data) {
-          // Keep only the most recent batch
           const latestBatch = data[0]?.generated_at
           setHkWatchlist(latestBatch ? data.filter(r => r.generated_at === latestBatch) : data)
         }
         setLoading(false)
       })
 
-    // Real-time: listen for new signals
     const channel = supabase
       .channel('signals')
       .on('postgres_changes',
@@ -193,13 +316,16 @@ export default function Dashboard() {
     )
   }
 
-  // ── Group signals by VIX zone ──
+  // ── Group signals ──
   const byVixZone = groupBy(signals, s => s.vix_zone || 'unknown')
   const zoneOrder = ['high_beta', 'moderate_beta', 'low_beta', 'defensive']
 
-  // Separate HK long vs short
   const hkLong = hkWatchlist.filter(r => r.candidate_type === 'long').sort((a, b) => b.rs_zscore - a.rs_zscore)
   const hkShort = hkWatchlist.filter(r => r.candidate_type === 'short').sort((a, b) => a.rs_zscore - b.rs_zscore)
+
+  // ── Chart modal ──
+  const openChart = useCallback((symbol) => setChartSymbol(symbol), [])
+  const closeChart = useCallback(() => setChartSymbol(null), [])
 
   // ── Main Dashboard ──
   return (
@@ -248,7 +374,6 @@ export default function Dashboard() {
 
         {!loading && tab !== 'hk' && (
           <div>
-            {/* US Signals */}
             <div className="mb-2">
               <h2 className="text-lg font-semibold text-white">US Signals</h2>
               <p className="text-xs text-market-500 mb-4">From signal engine · Auto-refreshes in real-time</p>
@@ -269,7 +394,6 @@ export default function Dashboard() {
               ))
             )}
 
-            {/* Unknown zone signals */}
             {byVixZone['unknown'] && byVixZone['unknown'].length > 0 && (
               <BucketSection
                 title="Other"
@@ -282,11 +406,10 @@ export default function Dashboard() {
 
         {!loading && tab !== 'us' && (
           <div>
-            {/* HK Watchlist Section */}
             <div className="mb-2">
               <h2 className="text-lg font-semibold text-white">HK Watchlist</h2>
               <p className="text-xs text-market-500 mb-4">
-                From Longbridge market data · Updated daily after market close
+                From Longbridge market data · Click any symbol for chart · Updated daily after market close
               </p>
             </div>
 
@@ -296,26 +419,24 @@ export default function Dashboard() {
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Long candidates */}
                 <div>
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-emerald-400 mb-3">
                     Top Long Candidates ({hkLong.length})
                   </h3>
                   <div className="space-y-2">
                     {hkLong.map((r, i) => (
-                      <HkCard key={`${r.id}-${i}`} {...r} />
+                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} />
                     ))}
                   </div>
                 </div>
 
-                {/* Short candidates */}
                 <div>
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-red-400 mb-3">
                     Top Short Candidates ({hkShort.length})
                   </h3>
                   <div className="space-y-2">
                     {hkShort.map((r, i) => (
-                      <HkCard key={`${r.id}-${i}`} {...r} />
+                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} />
                     ))}
                   </div>
                 </div>
@@ -324,6 +445,11 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Chart Modal */}
+      {chartSymbol && (
+        <ChartModal symbol={chartSymbol} onClose={closeChart} />
+      )}
     </div>
   )
 }
