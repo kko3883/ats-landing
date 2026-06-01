@@ -173,26 +173,30 @@ function ChartModal({ symbol, onClose }) {
 
 // ── Card Components ─────────────────────────────────────────────────────
 
-function SignalCard({ signal, onChart }) {
+function SignalCard({ signal, onChart, stockNames }) {
   const bucket = signal.bucket || 'alpha'
   const style = BUCKET_COLORS[bucket] || BUCKET_COLORS.alpha
   const meta = signal.signal_json || {}
   const ctx = meta.context || {}
   const ticker = signal.ticker
+  const name = stockNames?.[ticker] || stockNames?.[`${ticker}.US`] || ''
 
   return (
     <div
       className={`${style.bg} ${style.border} border rounded-lg p-4 cursor-pointer transition-colors group hover:brightness-110`}
       onClick={() => onChart?.(ticker)}
     >
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
-          <span className="text-lg font-bold text-white">{ticker}</span>
-          <svg className="w-4 h-4 text-market-500 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div>
+            <span className="text-lg font-bold text-white">{ticker}</span>
+            {name && <span className="block text-xs text-market-400 leading-tight">{name}</span>}
+          </div>
+          <svg className="w-4 h-4 text-market-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
           </svg>
         </div>
-        <span className={`text-xs font-mono px-2 py-0.5 rounded-full ${signal.direction === 'LONG' ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
+        <span className={`text-xs font-mono px-2 py-0.5 rounded-full shrink-0 ${signal.direction === 'LONG' ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
           {signal.direction}
         </span>
       </div>
@@ -213,57 +217,90 @@ function SignalCard({ signal, onChart }) {
             <span className="text-red-400">${typeof meta.stop_loss === 'number' ? meta.stop_loss.toFixed(2) : meta.stop_loss}</span>
           </div>
         )}
+        {/* Indicator pills */}
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {ctx.breakout && <span className="text-xs bg-blue-800 text-blue-200 px-1.5 py-0.5 rounded">Breakout</span>}
+          {ctx.sma_crossover && <span className="text-xs bg-purple-800 text-purple-200 px-1.5 py-0.5 rounded">Golden X</span>}
+          {ctx.rsi_lt === true && <span className="text-xs bg-orange-800 text-orange-200 px-1.5 py-0.5 rounded">Oversold</span>}
+          {ctx.rsi_gt === true && <span className="text-xs bg-rose-800 text-rose-200 px-1.5 py-0.5 rounded">Overbought</span>}
+          {ctx.price_above_sma && <span className="text-xs bg-emerald-800 text-emerald-200 px-1.5 py-0.5 rounded">Above SMA</span>}
+          {ctx.price_below_sma && <span className="text-xs bg-red-800 text-red-200 px-1.5 py-0.5 rounded">Below SMA</span>}
+          {ctx.pullback === true && <span className="text-xs bg-cyan-800 text-cyan-200 px-1.5 py-0.5 rounded">Pullback</span>}
+        </div>
         {meta.strategy_name && (
-          <div className="flex justify-between">
-            <span>Strategy</span>
-            <span className="text-market-400">{meta.strategy_name.replace(/_/g, ' ')}</span>
+          <div className="flex justify-between pt-1">
+            <span className="text-market-500 italic">{meta.strategy_name.replace(/_/g, ' ')}</span>
           </div>
         )}
-        {ctx.breakout && <span className="inline-block text-xs bg-blue-800 text-blue-200 px-2 py-0.5 rounded mt-1">Breakout</span>}
       </div>
     </div>
   )
 }
 
-function HkCard({ symbol, candidate_type, rs_zscore, beta_group, onChart }) {
+function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_group, onChart, stockNames, onRsInfo }) {
   const isLong = candidate_type === 'long'
+  const name = stockNames?.[symbol] || ''
   return (
     <div
       className={`${isLong ? 'bg-emerald-900/20 border-emerald-700/40 hover:bg-emerald-900/40' : 'bg-red-900/20 border-red-700/40 hover:bg-red-900/40'} border rounded-lg p-3 cursor-pointer transition-colors group`}
       onClick={() => onChart?.(symbol)}
     >
       <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-2">
-          <span className="font-bold text-white">{symbol}</span>
-          <svg className="w-3.5 h-3.5 text-market-500 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="min-w-0">
+            <span className="font-bold text-white">{symbol}</span>
+            {name && <span className="block text-xs text-market-400 truncate">{name}</span>}
+          </div>
+          <svg className="w-3.5 h-3.5 text-market-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
           </svg>
         </div>
-        <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${isLong ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
+        <span className={`text-xs font-mono px-1.5 py-0.5 rounded shrink-0 ${isLong ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
           {isLong ? 'LONG' : 'SHORT'}
         </span>
       </div>
       <div className="text-xs text-market-400 space-y-0.5">
-        <div className="flex justify-between">
-          <span>RS Z-Score</span>
-          <span className={isLong ? 'text-emerald-300' : 'text-red-300'}>{rs_zscore > 0 ? '+' : ''}{rs_zscore.toFixed(3)}</span>
+        <div className="flex justify-between items-center">
+          <span className="flex items-center gap-1">
+            RS Z-Score
+            <button onClick={(e) => { e.stopPropagation(); onRsInfo?.(); }} className="text-market-500 hover:text-market-300">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+          </span>
+          <span className={isLong ? 'text-emerald-300' : 'text-red-300'}>{rs_zscore > 0 ? '+' : ''}{typeof rs_zscore === 'number' ? rs_zscore.toFixed(3) : rs_zscore}</span>
         </div>
-        <div className="flex justify-between">
-          <span>Beta Group</span>
-          <span className="text-market-300">{beta_group?.replace('group_', '')}</span>
-        </div>
+        {beta_vix != null && (
+          <div className="flex justify-between">
+            <span>VIX Beta</span>
+            <span className={beta_vix < 0 ? 'text-rose-300' : 'text-emerald-300'}>{beta_vix > 0 ? '+' : ''}{typeof beta_vix === 'number' ? beta_vix.toFixed(3) : beta_vix}</span>
+          </div>
+        )}
+        {beta_dxy != null && (
+          <div className="flex justify-between">
+            <span>DXY Beta</span>
+            <span className={beta_dxy < 0 ? 'text-rose-300' : 'text-emerald-300'}>{beta_dxy > 0 ? '+' : ''}{typeof beta_dxy === 'number' ? beta_dxy.toFixed(3) : beta_dxy}</span>
+          </div>
+        )}
+        {beta_group && (
+          <div className="flex justify-between">
+            <span>Beta Group</span>
+            <span className="text-market-300">{beta_group.replace('group_', '')}</span>
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-function BucketSection({ title, signals, style, onChart }) {
+function BucketSection({ title, signals, style, onChart, stockNames }) {
   if (!signals || signals.length === 0) return null
   return (
     <div className="mb-6">
       <h3 className={`text-sm font-semibold uppercase tracking-wider mb-3 ${style.text}`}>{title} ({signals.length})</h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {signals.map(s => <SignalCard key={s.id} signal={s} onChart={onChart} />)}
+        {signals.map(s => <SignalCard key={s.id} signal={s} onChart={onChart} stockNames={stockNames} />)}
       </div>
     </div>
   )
@@ -278,6 +315,24 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('all')
   const [chartSymbol, setChartSymbol] = useState(null) // symbol to show chart for, or null
+  const [stockNames, setStockNames] = useState({}) // {symbol: name}
+  const [rsExplainer, setRsExplainer] = useState(null) // show RS tooltip
+
+  // Load stock names map
+  useEffect(() => {
+    fetch('/data/stock_names.json')
+      .then(r => r.json())
+      .then(data => {
+        const flat = {}
+        for (const market of ['us', 'hk']) {
+          if (data[market]) {
+            Object.assign(flat, data[market])
+          }
+        }
+        setStockNames(flat)
+      })
+      .catch(() => {}) // silently fail, names are optional
+  }, [])
 
   useEffect(() => {
     if (!supabase) {
@@ -441,6 +496,7 @@ export default function Dashboard() {
                   signals={byVixZone[zone] || []}
                   style={BUCKET_COLORS.alpha}
                   onChart={openChart}
+                  stockNames={stockNames}
                 />
               ))
             )}
@@ -451,6 +507,7 @@ export default function Dashboard() {
                 signals={byVixZone['unknown']}
                 style={BUCKET_COLORS.convexity}
                 onChart={openChart}
+                stockNames={stockNames}
               />
             )}
           </div>
@@ -477,7 +534,7 @@ export default function Dashboard() {
                   </h3>
                   <div className="space-y-2">
                     {hkLong.map((r, i) => (
-                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} />
+                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} />
                     ))}
                   </div>
                 </div>
@@ -488,7 +545,7 @@ export default function Dashboard() {
                   </h3>
                   <div className="space-y-2">
                     {hkShort.map((r, i) => (
-                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} />
+                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} />
                     ))}
                   </div>
                 </div>
@@ -497,6 +554,60 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* RS Z-Score Explainer */}
+      {rsExplainer && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+             onClick={() => setRsExplainer(null)}>
+          <div className="bg-market-900 border border-market-700 rounded-xl shadow-2xl max-w-lg w-full p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-white">What is RS Z-Score?</h3>
+                <p className="text-xs text-market-400 mt-1">Relative Strength Z-Score</p>
+              </div>
+              <button onClick={() => setRsExplainer(null)} className="text-market-400 hover:text-white p-1">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="space-y-3 text-sm text-market-300">
+              <p>
+                <strong className="text-white">RS Z-Score</strong> measures how a stock performed
+                relative to its peer group over the past month.
+              </p>
+              <div className="bg-market-800 rounded-lg p-3 text-xs space-y-2">
+                <div className="flex justify-between">
+                  <span>Calculation:</span>
+                  <span className="text-market-400 text-right w-3/5">(stock_return − group_mean) ÷ group_std</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Groups are:</span>
+                  <span className="text-market-400 text-right w-3/5">Stocks with similar VIX beta</span>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-emerald-400 font-bold">+Z</span>
+                  <span>Outperforming peers → <strong className="text-white">Long candidates</strong> (top 10%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-red-400 font-bold">−Z</span>
+                  <span>Underperforming peers → <strong className="text-white">Short candidates</strong> (bottom 10%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-market-500 font-bold">|Z| &gt; 2</span>
+                  <span>Statistically significant — strong momentum signal</span>
+                </div>
+              </div>
+              <p className="text-xs text-market-500 italic mt-2">
+                RS Z-Score is a cross-sectional metric comparing stocks within the same
+                VIX beta group. It captures relative momentum adjusted for macro risk exposure.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Chart Modal — key forces clean unmount/remount on symbol change */}
       {chartSymbol && (
