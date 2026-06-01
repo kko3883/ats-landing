@@ -28,13 +28,26 @@ const VIX_ZONE_LABELS = {
 
 // ── Symbol → TradingView ─────────────────────────────────────────────
 
+// Known NYSE-listed tickers — everything else defaults to NASDAQ
+const NYSE_TICKERS = new Set([
+  'BRK-B', 'BRK.B', 'JPM', 'V', 'MA', 'UNH', 'JNJ', 'PG', 'XOM', 'CVX',
+  'HD', 'KO', 'PEP', 'MRK', 'ABBV', 'ABT', 'WMT', 'COST', 'BA', 'CAT',
+  'DIS', 'DOW', 'GS', 'HON', 'IBM', 'MMM', 'NKE', 'TRV', 'RTX', 'DE',
+  'EL', 'GE', 'GM', 'LIN', 'MCD', 'MO', 'MS', 'NOC', 'PFE', 'PM',
+  'SYK', 'T', 'UPS', 'USB', 'WFC', 'DELL', 'ESTC', 'SNAP', 'SQ',
+  'TWLO', 'TOST', 'GTLB', 'DDOG', 'MDB', 'CFLT', 'NET',
+])
+
 function toTradingViewSymbol(symbol) {
   // "2382.HK" → "HKEX:2382"
   if (symbol.endsWith('.HK')) {
     return `HKEX:${symbol.replace(/\.HK$/, '')}`
   }
-  // US tickers (DELL, SMCI, etc.) → TradingView auto-resolves them
-  return symbol
+  // US tickers → prefix with exchange for reliable resolution
+  const exchange = NYSE_TICKERS.has(symbol) ? 'NYSE' : 'NASDAQ'
+  // Handle BRK-B → BRK.B (TradingView uses dots)
+  const tvSymbol = symbol === 'BRK-B' ? 'BRK.B' : symbol
+  return `${exchange}:${tvSymbol}`
 }
 
 function isHkSymbol(symbol) {
@@ -465,9 +478,9 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Chart Modal */}
+      {/* Chart Modal — key forces clean unmount/remount on symbol change */}
       {chartSymbol && (
-        <ChartModal symbol={chartSymbol} onClose={closeChart} />
+        <ChartModal key={chartSymbol} symbol={chartSymbol} onClose={closeChart} />
       )}
     </div>
   )
