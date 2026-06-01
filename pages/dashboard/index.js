@@ -39,9 +39,9 @@ const NYSE_TICKERS = new Set([
 ])
 
 function toTradingViewSymbol(symbol) {
-  // "2382.HK" → pass directly — TradingView accepts Yahoo Finance format
+  // "2382.HK" → "HKEX:2382" — TradingView's native HK exchange format
   if (symbol.endsWith('.HK')) {
-    return symbol  // TradingView supports .HK suffix natively
+    return `HKEX:${symbol.replace(/\.HK$/, '')}`
   }
   // US tickers → prefix with exchange for reliable resolution
   const exchange = NYSE_TICKERS.has(symbol) ? 'NYSE' : 'NASDAQ'
@@ -59,70 +59,25 @@ function isHkSymbol(symbol) {
 function ChartModal({ symbol, onClose }) {
   const tvSymbol = toTradingViewSymbol(symbol)
   const hk = isHkSymbol(symbol)
-  const containerId = `tv_chart_${symbol.replace(/[^a-zA-Z0-9]/g, '_')}`
 
-  useEffect(() => {
-    // Load TradingView script if not already loaded
-    if (!document.getElementById('tv_script')) {
-      const script = document.createElement('script')
-      script.id = 'tv_script'
-      script.src = 'https://s3.tradingview.com/tv.js'
-      script.async = true
-      document.body.appendChild(script)
-    }
-
-    // Wait for TV to be ready, then create widget
-    const initWidget = () => {
-      if (typeof window.TradingView !== 'undefined') {
-        // Hide loading placeholder before widget starts rendering
-        const loadingEl = document.getElementById(`${containerId}_loading`)
-        if (loadingEl) loadingEl.style.display = 'none'
-
-        new window.TradingView.widget({
-          container_id: containerId,
-          symbol: tvSymbol,
-          interval: 'D',
-          timezone: hk ? 'Asia/Hong_Kong' : 'America/New_York',
-          theme: 'dark',
-          style: '1', // Candlesticks
-          locale: 'en',
-          toolbar_bg: '#0d1117',
-          enable_publishing: false,
-          hide_side_toolbar: false,
-          allow_symbol_change: false,
-          save_image: false,
-          width: '100%',
-          height: 480,
-          studies: [
-            'RSI@tv-basicstudies',
-            'MASimple@tv-basicstudies',
-          ],
-          studies_overrides: {
-            'MASimple.length': 50,
-          },
-        })
-      } else {
-        setTimeout(initWidget, 500)
-      }
-    }
-
-    const checkInterval = setInterval(() => {
-      if (typeof window.TradingView !== 'undefined') {
-        clearInterval(checkInterval)
-        initWidget()
-      }
-    }, 200)
-
-    // Timeout after 10s
-    setTimeout(() => clearInterval(checkInterval), 10000)
-
-    return () => {
-      clearInterval(checkInterval)
-      // Cleanup widget container
-      const container = document.getElementById(containerId)
-      if (container) container.innerHTML = ''
-    }
-  }, [tvSymbol, containerId])
+  // Build TradingView embed URL with params
+  const params = new URLSearchParams({
+    symbol: tvSymbol,
+    interval: 'D',
+    timezone: hk ? 'Asia/Hong_Kong' : 'America/New_York',
+    theme: 'dark',
+    style: '1',
+    locale: 'en',
+    toolbar_bg: '#0d1117',
+    enable_publishing: 'false',
+    hide_side_toolbar: 'false',
+    allow_symbol_change: 'false',
+    save_image: 'false',
+    // Studies: RSI(14) + SMA(50)
+    studies: '["RSI@tv-basicstudies","MASimple@tv-basicstudies"]',
+    studies_overrides: '{"MASimple.length":50}',
+  })
+  const iframeUrl = `https://www.tradingview.com/widget/advanced-chart/?${params.toString()}`
 
   // Close on Escape key
   useEffect(() => {
@@ -139,7 +94,7 @@ function ChartModal({ symbol, onClose }) {
         <div className="flex items-center justify-between px-5 py-3 border-b border-market-700">
           <div>
             <h2 className="text-lg font-bold text-white">{symbol}</h2>
-            <p className="text-xs text-market-400">{tvSymbol} · Daily · Candlestick</p>
+            <p className="text-xs text-market-400">{tvSymbol} · Daily · Candlestick · RSI · SMA(50)</p>
           </div>
           <button
             onClick={onClose}
@@ -151,19 +106,15 @@ function ChartModal({ symbol, onClose }) {
           </button>
         </div>
 
-        {/* Chart container */}
-        <div
-          id={containerId}
-          className="w-full"
-          style={{ minHeight: '480px' }}
-        />
-
-        {/* Loading placeholder */}
-        <div className="flex items-center justify-center py-20 text-market-500 text-sm" id={`${containerId}_loading`}>
-          <div className="text-center">
-            <div className="animate-spin inline-block w-6 h-6 border-2 border-market-600 border-t-blue-500 rounded-full mb-3" />
-            <p>Loading chart...</p>
-          </div>
+        {/* Chart iframe — completely isolated load per symbol */}
+        <div className="w-full" style={{ height: '480px' }}>
+          <iframe
+            title={`Chart: ${symbol}`}
+            src={iframeUrl}
+            className="w-full h-full border-0"
+            loading="lazy"
+            allow="fullscreen"
+          />
         </div>
       </div>
     </div>
