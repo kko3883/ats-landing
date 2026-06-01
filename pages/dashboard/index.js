@@ -153,56 +153,128 @@ function ChartModal({ symbol, onClose }) {
   )
 }
 
-// ── Indicator Display ──────────────────────────────────────────────────
+// ── Indicator Panel ────────────────────────────────────────────────────
+// Normalizes each indicator to a -10 (sell) to +10 (buy) scale
 
-const SIGNAL_COLORS = {
-  buy: 'bg-emerald-700/80 text-emerald-100',
-  sell: 'bg-red-700/80 text-red-100',
-  hold: 'bg-market-600/80 text-market-200',
+function normScore(value, type) {
+  if (value == null) return null
+  switch (type) {
+    case 'rsi':    return Math.max(-10, Math.min(10, ((50 - value) / 20) * 10))
+    case 'stoch':  return Math.max(-10, Math.min(10, ((50 - value) / 30) * 10))
+    case 'mfi':    return Math.max(-10, Math.min(10, ((50 - value) / 30) * 10))
+    case 'bb':     return Math.max(-10, Math.min(10, (0.5 - value) * 20))
+    case 'macd':   return Math.max(-10, Math.min(10, value * 5))
+    case 'obv':    return Math.max(-10, Math.min(10, value / 100000))
+    case 'adx':    return Math.max(-10, Math.min(10, ((value - 25) / 15) * 10))
+    default:       return 0
+  }
 }
 
-const COMPOSITE_COLORS = {
-  strong_buy: { bg: 'bg-emerald-800', text: 'text-emerald-200' },
-  buy: { bg: 'bg-emerald-700', text: 'text-emerald-100' },
-  hold: { bg: 'bg-market-600', text: 'text-market-200' },
-  sell: { bg: 'bg-red-700', text: 'text-red-100' },
-  strong_sell: { bg: 'bg-red-800', text: 'text-red-200' },
+const COMPOSITE_CFG = {
+  strong_buy:  { short: 'SBuy',  color: 'text-emerald-300', bg: 'bg-emerald-900/50', bar: 'bg-emerald-500' },
+  buy:         { short: 'Buy',   color: 'text-emerald-400', bg: 'bg-emerald-900/25', bar: 'bg-emerald-500' },
+  hold:        { short: 'Hold',  color: 'text-yellow-300',  bg: 'bg-yellow-900/25',  bar: 'bg-yellow-500'  },
+  sell:        { short: 'Sell',  color: 'text-red-400',     bg: 'bg-red-900/25',     bar: 'bg-red-500'     },
+  strong_sell: { short: 'SSell', color: 'text-red-300',     bg: 'bg-red-900/50',     bar: 'bg-red-500'     },
 }
 
-function IndicatorDots({ ind }) {
-  if (!ind) return null
-  const indicators = [
-    { key: 'macd_signal', label: 'MACD' },
-    { key: 'adx_signal', label: 'ADX' },
-    { key: 'rsi_signal', label: 'RSI' },
-    { key: 'stoch_signal', label: 'Stoch' },
-    { key: 'mfi_signal', label: 'MFI' },
-    { key: 'obv_signal', label: 'OBV' },
-    { key: 'bb_signal', label: '%B' },
-  ]
+function sgn(v) {
+  if (v == null || isNaN(v)) return ''
+  return v > 0 ? '+' : ''
+}
+
+function IndicatorBar({ rawValue, type, label }) {
+  const score = normScore(rawValue, type)
+  if (score == null || isNaN(score)) return null
+  // Bar fill: -10 (left/red) to +10 (right/green). Center = 0 (gray).
+  // Position: 0 → left edge, 1 → right edge
+  const pct = (score + 10) / 20 * 100  // 0% to 100%
+  const isBuy = score > 1
+  const isSell = score < -1
+  const barBg = isBuy ? 'bg-emerald-600' : isSell ? 'bg-red-600' : 'bg-market-500'
   return (
-    <div className="flex flex-wrap gap-1 mt-2">
-      {indicators.map(({ key, label }) => {
-        const sig = ind[key]
-        const color = SIGNAL_COLORS[sig] || SIGNAL_COLORS.hold
-        return (
-          <span key={key}
-            className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${color}`}
-            title={`${label}: ${sig}`}
-          >
-            {label}
-          </span>
-        )
-      })}
+    <div className="flex items-center gap-1.5 text-[11px]">
+      <span className="w-8 text-market-400 text-right font-mono shrink-0">{label}</span>
+      <div className="flex-1 h-3 bg-market-800 rounded-sm relative overflow-hidden">
+        {/* Center line */}
+        <div className="absolute left-1/2 top-0 bottom-0 w-px bg-market-600 z-10" />
+        {/* Fill from left or right depending on side */}
+        <div
+          className={`absolute top-0 bottom-0 ${barBg} rounded-sm`}
+          style={score >= 0
+            ? { left: '50%', width: `${pct - 50}%` }
+            : { right: `${100 - pct}%`, width: `${50 - pct}%` }
+          }
+        />
+      </div>
+      <span className={`w-10 text-right font-mono ${isBuy ? 'text-emerald-300' : isSell ? 'text-red-300' : 'text-market-300'}`}>
+        {sgn(score)}{score.toFixed(1)}
+      </span>
+    </div>
+  )
+}
+
+function IndicatorPanel({ ind, showAdx }) {
+  if (!ind) return (
+    <div className="text-[11px] text-market-500 text-center py-2 italic">No 1h indicator data</div>
+  )
+
+  const rows = [
+    { key: 'macd_value', type: 'macd', label: 'MACD' },
+    { key: 'adx_value', type: 'adx', label: 'ADX' },
+    { key: 'rsi_value', type: 'rsi', label: 'RSI' },
+    { key: 'stoch_k', type: 'stoch', label: 'Stoch' },
+    { key: 'mfi_value', type: 'mfi', label: 'MFI' },
+    { key: 'obv_slope', type: 'obv', label: 'OBV' },
+    { key: 'bb_percent_b', type: 'bb', label: '%B' },
+  ]
+  const filtered = showAdx ? rows : rows.filter(r => r.key !== 'adx_value')
+
+  const comp = ind.composite_signal || 'hold'
+  const cfg = COMPOSITE_CFG[comp] || COMPOSITE_CFG.hold
+  const compScore = ind.composite_score ?? 0
+  const compPct = (compScore + 7) / 14 * 100  // -7 to +7 → 0% to 100%
+
+  return (
+    <div className="space-y-0.5 mt-1.5">
+      <div className="text-[10px] text-market-500 uppercase tracking-wider mb-1">Indicators (1h)</div>
+      {filtered.map(({ key, type, label }) => (
+        <IndicatorBar key={key} rawValue={ind[key]} type={type} label={label} />
+      ))}
+      {/* Composite bar — different scale: -7 to +7 */}
+      <div className="flex items-center gap-1.5 text-[11px] mt-1.5 pt-1.5 border-t border-market-800">
+        <span className="w-8 text-market-300 text-right font-mono shrink-0 text-[10px]">Cmp</span>
+        <div className="flex-1 h-3.5 bg-market-800 rounded-sm relative overflow-hidden">
+          <div className="absolute left-1/2 top-0 bottom-0 w-px bg-market-600 z-10" />
+          <div
+            className={`absolute top-0 bottom-0 ${cfg.bar} rounded-sm`}
+            style={compScore >= 0
+              ? { left: '50%', width: `${compPct - 50}%` }
+              : { right: `${100 - compPct}%`, width: `${50 - compPct}%` }
+            }
+          />
+        </div>
+        <span className={`w-10 text-right font-mono font-bold ${cfg.color}`}>
+          {sgn(compScore)}{compScore}
+        </span>
+      </div>
+      {/* Raw values in a tooltip row */}
+      <div className="text-[9px] text-market-600 text-center mt-0.5">
+        {filtered.map(({ key, type, label }) => {
+          const v = ind[key]
+          if (v == null) return null
+          return <span key={key} className="mr-2">{label}: {typeof v === 'number' ? (Math.abs(v) < 100 ? v.toFixed(2) : v.toFixed(0)) : v}</span>
+        })}
+      </div>
     </div>
   )
 }
 
 function CompositeBadge({ signal }) {
-  const colors = COMPOSITE_COLORS[signal] || COMPOSITE_COLORS.hold
+  const cfg = COMPOSITE_CFG[signal] || COMPOSITE_CFG.hold
   return (
-    <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${colors.bg} ${colors.text}`}>
-      {signal ? signal.replace('_', ' ') : 'hold'}
+    <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${cfg.bg} ${cfg.color}`}>
+      {cfg.short}
     </span>
   )
 }
@@ -217,56 +289,47 @@ function SignalCard({ signal, onChart, stockNames, ind }) {
   const bucket = signal.bucket || 'alpha'
   const style = BUCKET_COLORS[bucket] || BUCKET_COLORS.alpha
   const meta = signal.signal_json || {}
-  const ctx = meta.context || {}
   const ticker = signal.ticker
   const name = stockNames?.[ticker] || stockNames?.[`${ticker}.US`] || ''
 
   return (
     <div
-      className={`${style.bg} ${style.border} border rounded-lg p-4 cursor-pointer transition-colors group hover:brightness-110`}
+      className={`${style.bg} ${style.border} border rounded-lg p-3 cursor-pointer transition-colors group hover:brightness-110`}
       onClick={() => onChart?.(ticker)}
     >
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-2">
-          <div>
-            <span className="text-lg font-bold text-white">{ticker}</span>
-            {name && <span className="block text-xs text-market-400 leading-tight">{name}</span>}
-          </div>
-          <svg className="w-4 h-4 text-market-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
-          </svg>
+      {/* Header: ticker + badges */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-bold text-white text-sm truncate">{ticker}</span>
+          {name && <span className="text-[10px] text-market-500 truncate hidden sm:block">{name}</span>}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           <CompositeBadge signal={ind?.composite_signal} />
-          <span className={`text-xs font-mono px-2 py-0.5 rounded-full ${signal.direction === 'LONG' ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
+          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${signal.direction === 'LONG' ? 'bg-emerald-800/50 text-emerald-200' : 'bg-red-800/50 text-red-200'}`}>
             {signal.direction}
           </span>
         </div>
       </div>
-      <div className="space-y-1 text-xs text-market-300">
-        <div className="flex justify-between">
-          <span>Bucket</span>
-          <span className={style.text}>{bucket}</span>
+
+      {/* Two-column layout: screener | technical indicators */}
+      <div className="flex gap-2">
+        {/* Left: screener data */}
+        <div className="w-24 shrink-0 space-y-0.5 text-[10px]">
+          <div className="flex justify-between text-market-400">
+            <span>Bucket</span>
+            <span className={style.text}>{bucket}</span>
+          </div>
+          {meta.price && (
+            <div className="flex justify-between text-market-400">
+              <span>Price</span>
+              <span className="text-white">${typeof meta.price === 'number' ? meta.price.toFixed(2) : meta.price}</span>
+            </div>
+          )}
         </div>
-        {meta.price && (
-          <div className="flex justify-between">
-            <span>Price</span>
-            <span className="text-white">${typeof meta.price === 'number' ? meta.price.toFixed(2) : meta.price}</span>
-          </div>
-        )}
-        {meta.stop_loss && (
-          <div className="flex justify-between">
-            <span>Stop Loss</span>
-            <span className="text-red-400">${typeof meta.stop_loss === 'number' ? meta.stop_loss.toFixed(2) : meta.stop_loss}</span>
-          </div>
-        )}
-        {/* Indicator dots */}
-        <IndicatorDots ind={ind} />
-        {meta.strategy_name && (
-          <div className="flex justify-between pt-1">
-            <span className="text-market-500 italic">{meta.strategy_name.replace(/_/g, ' ')}</span>
-          </div>
-        )}
+        {/* Right: technical indicators */}
+        <div className="flex-1 min-w-0">
+          <IndicatorPanel ind={ind} showAdx={false} />
+        </div>
       </div>
     </div>
   )
@@ -280,54 +343,58 @@ function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_gr
       className={`${isLong ? 'bg-emerald-900/20 border-emerald-700/40 hover:bg-emerald-900/40' : 'bg-red-900/20 border-red-700/40 hover:bg-red-900/40'} border rounded-lg p-3 cursor-pointer transition-colors group`}
       onClick={() => onChart?.(symbol)}
     >
-      <div className="flex items-center justify-between mb-1">
+      {/* Header: ticker + badges */}
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="min-w-0">
-            <span className="font-bold text-white">{symbol}</span>
-            {name && <span className="block text-xs text-market-400 truncate">{name}</span>}
-          </div>
-          <svg className="w-3.5 h-3.5 text-market-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
-          </svg>
+          <span className="font-bold text-white text-sm truncate">{symbol}</span>
+          {name && <span className="text-[10px] text-market-500 truncate hidden sm:block">{name}</span>}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <CompositeBadge signal={ind?.composite_signal} />
-          <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${isLong ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
+          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${isLong ? 'bg-emerald-800/50 text-emerald-200' : 'bg-red-800/50 text-red-200'}`}>
             {isLong ? 'LONG' : 'SHORT'}
           </span>
         </div>
       </div>
-      <div className="text-xs text-market-400 space-y-0.5">
-        <div className="flex justify-between items-center">
-          <span className="flex items-center gap-1">
-            RS Z-Score
-            <button onClick={(e) => { e.stopPropagation(); onRsInfo?.(); }} className="text-market-500 hover:text-market-300">
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </button>
-          </span>
-          <span className={isLong ? 'text-emerald-300' : 'text-red-300'}>{rs_zscore > 0 ? '+' : ''}{typeof rs_zscore === 'number' ? rs_zscore.toFixed(3) : rs_zscore}</span>
+
+      {/* Two-column: screener | technical indicators */}
+      <div className="flex gap-2">
+        {/* Left: screener data */}
+        <div className="w-24 shrink-0 space-y-1 text-[10px]">
+          <div className="flex items-center justify-between text-market-400">
+            <span className="flex items-center gap-0.5">
+              RS Z
+              <button onClick={(e) => { e.stopPropagation(); onRsInfo?.(); }} className="text-market-500 hover:text-market-300 leading-none">
+                <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>
+            </span>
+            <span className={isLong ? 'text-emerald-300' : 'text-red-300'}>{rs_zscore > 0 ? '+' : ''}{typeof rs_zscore === 'number' ? rs_zscore.toFixed(2) : rs_zscore}</span>
+          </div>
+          {beta_vix != null && (
+            <div className="flex justify-between text-market-400">
+              <span>VIX β</span>
+              <span className={beta_vix < 0 ? 'text-rose-300' : 'text-emerald-300'}>{beta_vix > 0 ? '+' : ''}{typeof beta_vix === 'number' ? beta_vix.toFixed(2) : beta_vix}</span>
+            </div>
+          )}
+          {beta_dxy != null && (
+            <div className="flex justify-between text-market-400">
+              <span>DXY β</span>
+              <span className={beta_dxy < 0 ? 'text-rose-300' : 'text-emerald-300'}>{beta_dxy > 0 ? '+' : ''}{typeof beta_dxy === 'number' ? beta_dxy.toFixed(2) : beta_dxy}</span>
+            </div>
+          )}
+          {beta_group && (
+            <div className="flex justify-between text-market-400">
+              <span>Group</span>
+              <span className="text-market-300">{beta_group.replace('group_', '').replace('_', ' ')}</span>
+            </div>
+          )}
         </div>
-        {beta_vix != null && (
-          <div className="flex justify-between">
-            <span>VIX Beta</span>
-            <span className={beta_vix < 0 ? 'text-rose-300' : 'text-emerald-300'}>{beta_vix > 0 ? '+' : ''}{typeof beta_vix === 'number' ? beta_vix.toFixed(3) : beta_vix}</span>
-          </div>
-        )}
-        {beta_dxy != null && (
-          <div className="flex justify-between">
-            <span>DXY Beta</span>
-            <span className={beta_dxy < 0 ? 'text-rose-300' : 'text-emerald-300'}>{beta_dxy > 0 ? '+' : ''}{typeof beta_dxy === 'number' ? beta_dxy.toFixed(3) : beta_dxy}</span>
-          </div>
-        )}
-        {beta_group && (
-          <div className="flex justify-between">
-            <span>Beta Group</span>
-            <span className="text-market-300">{beta_group.replace('group_', '')}</span>
-          </div>
-        )}
-        <IndicatorDots ind={ind} />
+        {/* Right: technical indicators */}
+        <div className="flex-1 min-w-0">
+          <IndicatorPanel ind={ind} showAdx={false} />
+        </div>
       </div>
     </div>
   )
