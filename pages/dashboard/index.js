@@ -360,7 +360,6 @@ function UnifiedCard({ item, onChart, stockNames, onRsInfo, ind }) {
   const screenerFields = [
     vix_zone && VIX_ZONE_LABELS[vix_zone] ? { label: 'VIX Zone', display: vixLabel, color: vixColor } : null,
     bucket ? { label: 'Bucket', display: bktLabel, color: colors.accent } : null,
-    group ? { label: 'Group', display: groupLabel, color: 'text-market-300' } : null,
     qty != null ? { label: 'Qty', display: qty, color: 'text-white' } : null,
     rs_zscore != null ? {
       label: 'RS Z',
@@ -511,6 +510,71 @@ function Section({ title, items, onChart, stockNames, onRsInfo, indicators }) {
   )
 }
 
+// ── Metrics Reference modal ──────────────────────────────────────────
+
+const METRICS_REFERENCE = [
+  { section: 'Screener', rows: [
+    { metric: 'VIX Zone', measures: 'Beta bucket based on VIX sensitivity', range: 'High Beta Growth → Defensive' },
+    { metric: 'Bucket', measures: 'Strategy allocation (Base Yield / Alpha / Convexity)', range: '—' },
+    { metric: 'RS Z-Score', measures: 'Relative strength vs peers — +Z outperforming, −Z underperforming', range: '|Z|>2 = significant' },
+    { metric: 'VIX β', measures: 'Stock return per 1% VIX move (negative = drops when fear rises)', range: '−3 to +3 typical' },
+    { metric: 'DXY β', measures: 'Stock return per 1% USD move', range: '−3 to +3 typical' },
+    { metric: 'β Group', measures: 'Peer group for RS Z-Score calculation', range: 'Based on VIX β quintile' },
+    { metric: 'Qty', measures: 'Shares held in portfolio', range: 'Integer' },
+  ]},
+  { section: 'Indicators (1h bars)', rows: [
+    { metric: 'MACD', measures: 'Trend direction (EMA crossover)', range: '+ = bullish, − = bearish' },
+    { metric: 'ADX', measures: 'Trend strength', range: '>25 trending, <20 ranging' },
+    { metric: 'RSI', measures: 'Momentum speed (gain/loss ratio)', range: '>70 overbought, <30 oversold' },
+    { metric: 'Stoch', measures: 'Close position within recent high-low range', range: '>80 overbought, <20 oversold' },
+    { metric: 'MFI', measures: 'Volume conviction (RSI x volume)', range: '>80 overbought, <20 oversold' },
+    { metric: 'OBV', measures: 'Accumulation trend (cumulative volume)', range: 'Up = buying pressure' },
+    { metric: '%B', measures: 'Volatility extension (Bollinger Band position)', range: '>1 above band, <0 below' },
+  ]},
+  { section: 'Price Action', rows: [
+    { metric: 'Composite', measures: 'Weighted vote of all 7 indicators', range: 'SBuy / Buy / Hold / Sell / SSell' },
+    { metric: 'ATR', measures: 'Average True Range — typical daily swing', range: 'Dollar value' },
+    { metric: 'Stop', measures: 'ATR × 1.5 below price (risk management)', range: 'Dollar value' },
+    { metric: 'Target', measures: 'ATR × 3.0 above price (profit target)', range: 'Dollar value' },
+  ]},
+]
+
+function MetricsReferenceModal({ onClose }) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+         onClick={onClose}>
+      <div className="bg-market-900 border border-market-700 rounded-xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h3 className="text-lg font-bold text-white">Metrics Reference</h3>
+            <p className="text-xs text-market-400 mt-1">What each metric measures and how to read it</p>
+          </div>
+          <button onClick={onClose} className="text-market-400 hover:text-white p-1">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {METRICS_REFERENCE.map(group => (
+          <div key={group.section} className="mb-5">
+            <h4 className="text-sm font-semibold text-white uppercase tracking-wider mb-2">{group.section}</h4>
+            <div className="bg-market-800 rounded-lg overflow-hidden">
+              {group.rows.map((r, i) => (
+                <div key={r.metric} className={`flex items-start gap-2 px-3 py-2 text-xs ${i % 2 === 0 ? 'bg-market-800' : 'bg-market-850'}`}>
+                  <span className="w-20 shrink-0 font-mono font-bold text-market-200">{r.metric}</span>
+                  <span className="flex-1 text-market-400">{r.measures}</span>
+                  <span className="w-36 shrink-0 text-right text-market-500 font-mono">{r.range}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Main Component ──────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -521,6 +585,7 @@ export default function Dashboard() {
   const [chartSymbol, setChartSymbol] = useState(null)
   const [stockNames, setStockNames] = useState({})
   const [rsExplainer, setRsExplainer] = useState(false)
+  const [metricsHelp, setMetricsHelp] = useState(false)
   const [indicatorSignals, setIndicatorSignals] = useState({})
   const [regime, setRegime] = useState(null)
   const [positions, setPositions] = useState([])
@@ -735,7 +800,10 @@ export default function Dashboard() {
               {regime && <span className="ml-2">{regimeBadge(regime)}</span>}
             </p>
           </div>
-          <a href="/" className="text-sm text-market-500 hover:text-market-300 transition-colors">← Home</a>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setMetricsHelp(true)} className="text-sm text-market-500 hover:text-market-300 transition-colors" title="Metrics reference">ⓘ</button>
+            <a href="/" className="text-sm text-market-500 hover:text-market-300 transition-colors">← Home</a>
+          </div>
         </div>
 
         {loading && (
@@ -761,6 +829,7 @@ export default function Dashboard() {
       </div>
 
       {rsExplainer && <RsExplainerModal onClose={() => setRsExplainer(false)} />}
+      {metricsHelp && <MetricsReferenceModal onClose={() => setMetricsHelp(false)} />}
       {chartSymbol && <ChartModal key={chartSymbol} symbol={chartSymbol} onClose={closeChart} />}
     </div>
   )
