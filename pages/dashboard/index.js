@@ -548,6 +548,9 @@ export default function Dashboard() {
 
     setConnected(true)
 
+    let loaded = 0
+    const checkDone = () => { loaded++; if (loaded >= 5) setLoading(false) }
+
     supabase.from('signals').select('*').order('created_at', { ascending: false }).limit(50)
       .then(({ data, error }) => {
         if (!error && data) {
@@ -561,6 +564,7 @@ export default function Dashboard() {
           }
           setSignals(unique)
         }
+        checkDone()
       })
 
     supabase.from('watchlist_hk').select('*').order('id', { ascending: false }).limit(50)
@@ -569,7 +573,7 @@ export default function Dashboard() {
           const latestBatch = data[0]?.generated_at
           setHkWatchlist(latestBatch ? data.filter(r => r.generated_at === latestBatch) : data)
         }
-        setLoading(false)
+        checkDone()
       })
 
     supabase.from('indicator_signals').select('*').order('calculated_at', { ascending: false }).limit(100)
@@ -581,16 +585,19 @@ export default function Dashboard() {
           }
           setIndicatorSignals(map)
         }
+        checkDone()
       })
 
     supabase.from('regime').select('*').order('created_at', { ascending: false }).limit(1)
       .then(({ data }) => {
         if (data && data.length > 0) setRegime(data[0])
+        checkDone()
       })
 
     supabase.from('portfolio').select('ticker,position_qty,market_value,bucket')
       .then(({ data }) => {
         if (data) setPositions(data)
+        checkDone()
       })
 
     const channel = supabase.channel('signals')
@@ -674,10 +681,7 @@ export default function Dashboard() {
   }
 
   // Portfolio — mark isHeld on existing items, create HOLD items for rest
-  const portfolioTickers = new Set(positions.map(p => p.ticker))
-  const posMap = {}
   for (const p of positions) {
-    posMap[p.ticker] = p
     if (dirSignalMap[p.ticker]) {
       dirSignalMap[p.ticker].isHeld = true
       if (p.position_qty != null) dirSignalMap[p.ticker].qty = p.position_qty
@@ -712,7 +716,6 @@ export default function Dashboard() {
   shortItems.sort((a, b) => (a.price ?? 0) - (b.price ?? 0))
   holdItems.sort((a, b) => (a.ticker || '').localeCompare(b.ticker || ''))
 
-  const heldSet = new Set(positions.map(p => p.ticker))
   const hasAny = longItems.length > 0 || shortItems.length > 0 || holdItems.length > 0
 
   // ── Handlers ──
