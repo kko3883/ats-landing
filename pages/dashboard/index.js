@@ -39,10 +39,9 @@ const NYSE_TICKERS = new Set([
 ])
 
 function toTradingViewSymbol(symbol) {
-  // "2382.HK" → "2382" → TradingView auto-resolves on HKEX
+  // "2382.HK" → pass directly — TradingView accepts Yahoo Finance format
   if (symbol.endsWith('.HK')) {
-    // Strip .HK suffix — TradingView understands the bare HK code
-    return symbol.replace(/\.HK$/, '')
+    return symbol  // TradingView supports .HK suffix natively
   }
   // US tickers → prefix with exchange for reliable resolution
   const exchange = NYSE_TICKERS.has(symbol) ? 'NYSE' : 'NASDAQ'
