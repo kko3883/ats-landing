@@ -214,7 +214,7 @@ function IndicatorBar({ rawValue, type, label }) {
   )
 }
 
-function IndicatorPanel({ ind, showAdx }) {
+function IndicatorPanel({ ind }) {
   if (!ind) return (
     <div className="text-[11px] text-market-500 text-center py-2 italic">No 1h indicator data</div>
   )
@@ -228,7 +228,6 @@ function IndicatorPanel({ ind, showAdx }) {
     { key: 'obv_slope', type: 'obv', label: 'OBV' },
     { key: 'bb_percent_b', type: 'bb', label: '%B' },
   ]
-  const filtered = showAdx ? rows : rows.filter(r => r.key !== 'adx_value')
 
   const comp = ind.composite_signal || 'hold'
   const cfg = COMPOSITE_CFG[comp] || COMPOSITE_CFG.hold
@@ -238,7 +237,7 @@ function IndicatorPanel({ ind, showAdx }) {
   return (
     <div className="space-y-0.5 mt-1.5">
       <div className="text-[10px] text-market-500 uppercase tracking-wider mb-1">Indicators (1h)</div>
-      {filtered.map(({ key, type, label }) => (
+      {rows.map(({ key, type, label }) => (
         <IndicatorBar key={key} rawValue={ind[key]} type={type} label={label} />
       ))}
       {/* Composite bar — different scale: -7 to +7 */}
@@ -260,7 +259,7 @@ function IndicatorPanel({ ind, showAdx }) {
       </div>
       {/* Raw values in a tooltip row */}
       <div className="text-[9px] text-market-600 text-center mt-0.5">
-        {filtered.map(({ key, type, label }) => {
+        {rows.map(({ key, type, label }) => {
           const v = ind[key]
           if (v == null) return null
           return <span key={key} className="mr-2">{label}: {typeof v === 'number' ? (Math.abs(v) < 100 ? v.toFixed(2) : v.toFixed(0)) : v}</span>
@@ -328,7 +327,7 @@ function SignalCard({ signal, onChart, stockNames, ind }) {
         </div>
         {/* Right: technical indicators */}
         <div className="flex-1 min-w-0">
-          <IndicatorPanel ind={ind} showAdx={false} />
+          <IndicatorPanel ind={ind} />
         </div>
       </div>
     </div>
@@ -393,7 +392,7 @@ function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_gr
         </div>
         {/* Right: technical indicators */}
         <div className="flex-1 min-w-0">
-          <IndicatorPanel ind={ind} showAdx={false} />
+          <IndicatorPanel ind={ind} />
         </div>
       </div>
     </div>
