@@ -78,23 +78,20 @@ function ChartModal({ symbol, onClose }) {
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
 
-  // Load TradingView script + create widget
+  // Create widget — tv.js is preloaded via _app.js
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
 
-    // Clean any leftover widget from previous mount
-    container.innerHTML = ''
+    // Clean previous widget first
     if (widgetRef.current) {
       try { widgetRef.current.remove() } catch {}
       widgetRef.current = null
     }
+    container.innerHTML = ''
 
-    const script = document.createElement('script')
-    script.src = 'https://s3.tradingview.com/tv.js'
-    script.async = true
-    script.onload = () => {
-      if (!container || !window.TradingView) return
+    const createWidget = () => {
+      if (!window.TradingView) return
       widgetRef.current = new window.TradingView.widget({
         container_id: container.id,
         symbol: tvSymbol,
@@ -113,15 +110,14 @@ function ChartModal({ symbol, onClose }) {
         autosize: true,
       })
     }
-    document.body.appendChild(script)
+
+    createWidget()
 
     return () => {
-      // Cleanup
       if (widgetRef.current) {
         try { widgetRef.current.remove() } catch {}
         widgetRef.current = null
       }
-      if (script.parentNode) script.parentNode.removeChild(script)
     }
   }, [tvSymbol, hk])
 
