@@ -3,22 +3,7 @@ import supabase from '../../lib/supabase'
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-function groupBy(arr, keyFn) {
-  const map = {}
-  for (const item of arr) {
-    const k = keyFn(item)
-    if (!map[k]) map[k] = []
-    map[k].push(item)
-  }
-  return map
-}
-
-const BUCKET_COLORS = {
-  base_yield: { bg: 'bg-blue-900/30', border: 'border-blue-700/50', text: 'text-blue-300' },
-  alpha: { bg: 'bg-purple-900/30', border: 'border-purple-700/50', text: 'text-purple-300' },
-  convexity: { bg: 'bg-amber-900/30', border: 'border-amber-700/50', text: 'text-amber-300' },
-}
-
+const BUCKET_LABELS = { base_yield: 'Base Yield', alpha: 'Alpha', convexity: 'Convexity', existing: 'Existing' }
 const VIX_ZONE_LABELS = {
   high_beta: { label: 'High Beta Growth', color: 'text-rose-300' },
   moderate_beta: { label: 'Moderate Growth', color: 'text-orange-300' },
@@ -28,7 +13,6 @@ const VIX_ZONE_LABELS = {
 
 // ── Symbol → TradingView ─────────────────────────────────────────────
 
-// Known NYSE-listed tickers — everything else defaults to NASDAQ
 const NYSE_TICKERS = new Set([
   'BRK-B', 'BRK.B', 'JPM', 'V', 'MA', 'UNH', 'JNJ', 'PG', 'XOM', 'CVX',
   'HD', 'KO', 'PEP', 'MRK', 'ABBV', 'ABT', 'WMT', 'COST', 'BA', 'CAT',
@@ -38,32 +22,28 @@ const NYSE_TICKERS = new Set([
   'TWLO', 'TOST', 'GTLB', 'DDOG', 'MDB', 'CFLT', 'NET',
 ])
 
-// Some HK stocks don't resolve with .HK suffix — use HKEX: prefix instead
 const HKEX_FALLBACK = new Set(['1928'])
 
 function toTradingViewSymbol(symbol) {
-  // TradingView accepts .HK suffix natively for most HK stocks
-  // e.g. "2382.HK", "9626.HK", "1810.HK" all resolve correctly
-  // Some (like 1928.HK) need HKEX: prefix
   if (symbol.endsWith('.HK')) {
     const code = symbol.replace(/\.HK$/, '')
-    if (HKEX_FALLBACK.has(code)) {
-      return `HKEX:${code}`
-    }
+    if (HKEX_FALLBACK.has(code)) return `HKEX:${code}`
     return symbol
   }
-  // US tickers → prefix with exchange for reliable resolution
   const exchange = NYSE_TICKERS.has(symbol) ? 'NYSE' : 'NASDAQ'
-  // Handle BRK-B → BRK.B (TradingView uses dots)
   const tvSymbol = symbol === 'BRK-B' ? 'BRK.B' : symbol
   return `${exchange}:${tvSymbol}`
 }
 
-function isHkSymbol(symbol) {
-  return symbol.endsWith('.HK')
+function isHkSymbol(symbol) { return symbol.endsWith('.HK') }
+
+// Normalize ticker for indicator lookup
+function indicatorKey(ticker) {
+  if (ticker.endsWith('.HK') || ticker.endsWith('.US')) return ticker
+  return `${ticker}.US`
 }
 
-// ── TradingView Chart Modal (widget script, not iframe) ────────────────────
+// ── TradingView Chart Modal ─────────────────────────────────────────────
 
 function ChartModal({ symbol, onClose }) {
   const tvSymbol = toTradingViewSymbol(symbol)
@@ -71,25 +51,20 @@ function ChartModal({ symbol, onClose }) {
   const containerRef = useRef(null)
   const widgetRef = useRef(null)
 
-  // Close on Escape key
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
 
-  // Create widget — tv.js is preloaded via _app.js
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-
-    // Clean previous widget first
     if (widgetRef.current) {
       try { widgetRef.current.remove() } catch {}
       widgetRef.current = null
     }
     container.innerHTML = ''
-
     const createWidget = () => {
       if (!window.TradingView) return
       widgetRef.current = new window.TradingView.widget({
@@ -110,9 +85,7 @@ function ChartModal({ symbol, onClose }) {
         autosize: true,
       })
     }
-
     createWidget()
-
     return () => {
       if (widgetRef.current) {
         try { widgetRef.current.remove() } catch {}
@@ -125,36 +98,24 @@ function ChartModal({ symbol, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
          onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="bg-market-900 border border-market-700 rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden">
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-market-700">
           <div>
             <h2 className="text-lg font-bold text-white">{symbol}</h2>
             <p className="text-xs text-market-400">{tvSymbol} · Daily · Candlestick · RSI · SMA(50)</p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-market-400 hover:text-white transition-colors p-1"
-          >
+          <button onClick={onClose} className="text-market-400 hover:text-white transition-colors p-1">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
-
-        {/* Chart container — widget mounts here */}
-        <div
-          id={`tv-${symbol.replace(/[^a-zA-Z0-9]/g, '-')}`}
-          ref={containerRef}
-          className="w-full"
-          style={{ height: '480px' }}
-        />
+        <div id={`tv-${symbol.replace(/[^a-zA-Z0-9]/g, '-')}`} ref={containerRef} className="w-full" style={{ height: '480px' }} />
       </div>
     </div>
   )
 }
 
 // ── Indicator Panel ────────────────────────────────────────────────────
-// Normalizes each indicator to a -10 (sell) to +10 (buy) scale
 
 function normScore(value, type) {
   if (value == null) return null
@@ -186,9 +147,7 @@ function sgn(v) {
 function IndicatorBar({ rawValue, type, label }) {
   const score = normScore(rawValue, type)
   if (score == null || isNaN(score)) return null
-  // Bar fill: -10 (left/red) to +10 (right/green). Center = 0 (gray).
-  // Position: 0 → left edge, 1 → right edge
-  const pct = (score + 10) / 20 * 100  // 0% to 100%
+  const pct = (score + 10) / 20 * 100
   const isBuy = score > 1
   const isSell = score < -1
   const barBg = isBuy ? 'bg-emerald-600' : isSell ? 'bg-red-600' : 'bg-market-500'
@@ -196,16 +155,12 @@ function IndicatorBar({ rawValue, type, label }) {
     <div className="flex items-center gap-1.5 text-[11px]">
       <span className="w-8 text-market-400 text-right font-mono shrink-0">{label}</span>
       <div className="flex-1 h-3 bg-market-800 rounded-sm relative overflow-hidden">
-        {/* Center line */}
         <div className="absolute left-1/2 top-0 bottom-0 w-px bg-market-600 z-10" />
-        {/* Fill from left or right depending on side */}
-        <div
-          className={`absolute top-0 bottom-0 ${barBg} rounded-sm`}
+        <div className={`absolute top-0 bottom-0 ${barBg} rounded-sm`}
           style={score >= 0
             ? { left: '50%', width: `${pct - 50}%` }
             : { right: `${100 - pct}%`, width: `${50 - pct}%` }
-          }
-        />
+          } />
       </div>
       <span className={`w-10 text-right font-mono ${isBuy ? 'text-emerald-300' : isSell ? 'text-red-300' : 'text-market-300'}`}>
         {sgn(score)}{score.toFixed(1)}
@@ -232,7 +187,7 @@ function IndicatorPanel({ ind }) {
   const comp = ind.composite_signal || 'hold'
   const cfg = COMPOSITE_CFG[comp] || COMPOSITE_CFG.hold
   const compScore = ind.composite_score ?? 0
-  const compPct = (compScore + 7) / 14 * 100  // -7 to +7 → 0% to 100%
+  const compPct = (compScore + 7) / 14 * 100
 
   return (
     <div className="space-y-0.5 mt-1.5">
@@ -240,24 +195,20 @@ function IndicatorPanel({ ind }) {
       {rows.map(({ key, type, label }) => (
         <IndicatorBar key={key} rawValue={ind[key]} type={type} label={label} />
       ))}
-      {/* Composite bar — different scale: -7 to +7 */}
       <div className="flex items-center gap-1.5 text-[11px] mt-1.5 pt-1.5 border-t border-market-800">
         <span className="w-8 text-market-300 text-right font-mono shrink-0 text-[10px]">Cmp</span>
         <div className="flex-1 h-3.5 bg-market-800 rounded-sm relative overflow-hidden">
           <div className="absolute left-1/2 top-0 bottom-0 w-px bg-market-600 z-10" />
-          <div
-            className={`absolute top-0 bottom-0 ${cfg.bar} rounded-sm`}
+          <div className={`absolute top-0 bottom-0 ${cfg.bar} rounded-sm`}
             style={compScore >= 0
               ? { left: '50%', width: `${compPct - 50}%` }
               : { right: `${100 - compPct}%`, width: `${50 - compPct}%` }
-            }
-          />
+            } />
         </div>
         <span className={`w-10 text-right font-mono font-bold ${cfg.color}`}>
           {sgn(compScore)}{compScore}
         </span>
       </div>
-      {/* Raw values */}
       <div className="text-[9px] text-market-600 text-center mt-0.5">
         {rows.map(({ key, type, label }) => {
           const v = ind[key]
@@ -265,7 +216,6 @@ function IndicatorPanel({ ind }) {
           return <span key={key} className="mr-2">{label}: {typeof v === 'number' ? (Math.abs(v) < 100 ? v.toFixed(2) : v.toFixed(0)) : v}</span>
         })}
       </div>
-      {/* Entry/Stop/Target */}
       {ind.atr_value != null && (
         <div className="text-[10px] text-market-400 text-center mt-1 pt-1 border-t border-market-800/50">
           ATR: <span className="text-market-300">${ind.atr_value.toFixed(2)}</span>
@@ -286,22 +236,12 @@ function CompositeBadge({ signal }) {
   )
 }
 
-// Helper: normalize ticker key for indicator lookup
-function indicatorKey(ticker) {
-  if (ticker.endsWith('.HK') || ticker.endsWith('.US')) return ticker
-  return `${ticker}.US`
-}
-
-// ── Alignment detection ───────────────────────────────────────────────
-// Checks if screener direction agrees with indicator composite
+// ── Alignment ──────────────────────────────────────────────────────────
 
 function getAlignment(screenerDirection, indicatorSignal) {
-  // screenerDirection: 'LONG' or 'SHORT' (or 'long'/'short')
-  // indicatorSignal: 'strong_buy','buy','hold','sell','strong_sell'
   const isLong = screenerDirection?.toLowerCase() === 'long'
   const isBullish = ['strong_buy', 'buy'].includes(indicatorSignal)
   const isBearish = ['strong_sell', 'sell'].includes(indicatorSignal)
-
   if (isLong && isBullish) return 'aligned'
   if (!isLong && isBearish) return 'aligned'
   if (isLong && isBearish) return 'conflict'
@@ -343,130 +283,177 @@ function regimeBadge(r) {
   )
 }
 
-function SignalCard({ signal, onChart, stockNames, ind, held }) {
-  const bucket = signal.bucket || 'alpha'
-  const style = BUCKET_COLORS[bucket] || BUCKET_COLORS.alpha
-  const meta = signal.signal_json || {}
-  const ticker = signal.ticker
-  const name = stockNames?.[ticker] || stockNames?.[`${ticker}.US`] || ''
-  const vixLabel = VIX_ZONE_LABELS[signal.vix_zone]?.label || signal.vix_zone || '—'
-  const tickerHeld = held?.has(ticker) || held?.has(`${ticker}.US`)
+// ── RS Explainer modal ────────────────────────────────────────────────
 
+function RsExplainerModal({ onClose }) {
   return (
-    <div
-      className={`${style.bg} ${style.border} border rounded-lg p-3 cursor-pointer transition-colors group hover:brightness-110`}
-      onClick={() => onChart?.(ticker)}
-    >
-      {/* Header: ticker + badges */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="font-bold text-white text-sm truncate">{ticker}</span>
-          {tickerHeld && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-blue-800/40 text-blue-300 shrink-0">Held</span>}
-          {name && <span className="text-[10px] text-market-500 truncate hidden sm:block">{name}</span>}
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <AlignmentBadge direction={signal.direction} indicatorSignal={ind?.composite_signal} />
-          <CompositeBadge signal={ind?.composite_signal} />
-          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${signal.direction === 'LONG' ? 'bg-emerald-800/50 text-emerald-200' : 'bg-red-800/50 text-red-200'}`}>
-            {signal.direction}
-          </span>
-        </div>
-      </div>
-
-      {/* Two-column layout: screener | technical indicators */}
-      <div className="flex gap-2">
-        {/* Left: screener data */}
-        <div className="w-24 shrink-0 space-y-1 text-[10px]">
-          <div className="flex justify-between text-market-400">
-            <span>VIX Zone</span>
-            <span className="text-market-300">{vixLabel}</span>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+         onClick={onClose}>
+      <div className="bg-market-900 border border-market-700 rounded-xl shadow-2xl max-w-lg w-full p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-bold text-white">What is RS Z-Score?</h3>
+            <p className="text-xs text-market-400 mt-1">Relative Strength Z-Score</p>
           </div>
-          <div className="flex justify-between text-market-400">
-            <span>Bucket</span>
-            <span className={style.text}>{bucket}</span>
-          </div>
-          {meta.group && (
-            <div className="flex justify-between text-market-400">
-              <span>Group</span>
-              <span className="text-market-300">{meta.group.replace(/_/g, ' ')}</span>
-            </div>
-          )}
-          {meta.price && (
-            <div className="flex justify-between text-market-400">
-              <span>Price</span>
-              <span className="text-white">${typeof meta.price === 'number' ? meta.price.toFixed(2) : meta.price}</span>
-            </div>
-          )}
+          <button onClick={onClose} className="text-market-400 hover:text-white p-1">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
-        {/* Right: technical indicators */}
-        <div className="flex-1 min-w-0">
-          <IndicatorPanel ind={ind} />
+        <div className="space-y-3 text-sm text-market-300">
+          <p><strong className="text-white">RS Z-Score</strong> measures how a stock performed relative to its peer group over the past month.</p>
+          <div className="bg-market-800 rounded-lg p-3 text-xs space-y-2">
+            <div className="flex justify-between">
+              <span>Calculation:</span>
+              <span className="text-market-400 text-right w-3/5">(stock_return − group_mean) ÷ group_std</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Groups are:</span>
+              <span className="text-market-400 text-right w-3/5">Stocks with similar VIX beta</span>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="text-emerald-400 font-bold">+Z</span>
+              <span>Outperforming peers → <strong className="text-white">Long candidates</strong> (top 10%)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-red-400 font-bold">−Z</span>
+              <span>Underperforming peers → <strong className="text-white">Short candidates</strong> (bottom 10%)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-market-500 font-bold">|Z| &gt; 2</span>
+              <span>Statistically significant — strong momentum signal</span>
+            </div>
+          </div>
+          <p className="text-xs text-market-500 italic mt-2">
+            RS Z-Score is a cross-sectional metric comparing stocks within the same
+            VIX beta group. It captures relative momentum adjusted for macro risk exposure.
+          </p>
         </div>
       </div>
     </div>
   )
 }
 
-function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_group, onChart, stockNames, onRsInfo, ind, held }) {
-  const isLong = candidate_type === 'long'
-  const name = stockNames?.[symbol] || ''
-  const tickerHeld = held?.has(symbol) || held?.has(symbol.replace('.HK', ''))
+// ── Unified Card ──────────────────────────────────────────────────────
+// Expects: item = { ticker, direction, isHeld, price, vix_zone, bucket, group, qty, rs_zscore, beta_vix, beta_dxy, beta_group }
+
+function UnifiedCard({ item, onChart, stockNames, onRsInfo, ind }) {
+  const { ticker, direction, isHeld, price, vix_zone, bucket, group, qty, rs_zscore, beta_vix, beta_dxy, beta_group } = item
+
+  const name = stockNames?.[ticker] || stockNames?.[ticker.replace(/\.(US|HK)$/, '')] || ''
+
+  const isLong = direction === 'LONG'
+  const isShort = direction === 'SHORT'
+
+  // Colour by direction: LONG=emerald, HOLD=blue, SHORT=red
+  const colors = isLong
+    ? { bg: 'bg-emerald-900/20', border: 'border-emerald-700/40', hover: 'hover:bg-emerald-900/40' }
+    : isShort
+    ? { bg: 'bg-red-900/20', border: 'border-red-700/40', hover: 'hover:bg-red-900/40' }
+    : { bg: 'bg-blue-900/20', border: 'border-blue-700/40', hover: 'hover:bg-blue-900/30' }
+
+  const vixLabel = VIX_ZONE_LABELS[vix_zone]?.label || vix_zone || '—'
+  const bktLabel = BUCKET_LABELS[bucket] || bucket || '—'
+
   return (
     <div
-      className={`${isLong ? 'bg-emerald-900/20 border-emerald-700/40 hover:bg-emerald-900/40' : 'bg-red-900/20 border-red-700/40 hover:bg-red-900/40'} border rounded-lg p-3 cursor-pointer transition-colors group`}
-      onClick={() => onChart?.(symbol)}
+      className={`${colors.bg} ${colors.border} ${colors.hover} border rounded-lg p-3 cursor-pointer transition-colors group`}
+      onClick={() => onChart?.(ticker)}
     >
       {/* Header: ticker + badges */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="font-bold text-white text-sm truncate">{symbol}</span>
-          {tickerHeld && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-blue-800/40 text-blue-300 shrink-0">Held</span>}
+          <span className="font-bold text-white text-sm truncate">{ticker}</span>
+          {isHeld && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-blue-800/40 text-blue-300 shrink-0">Held</span>}
           {name && <span className="text-[10px] text-market-500 truncate hidden sm:block">{name}</span>}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <AlignmentBadge direction={candidate_type} indicatorSignal={ind?.composite_signal} />
-          <CompositeBadge signal={ind?.composite_signal} />
-          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${isLong ? 'bg-emerald-800/50 text-emerald-200' : 'bg-red-800/50 text-red-200'}`}>
-            {isLong ? 'LONG' : 'SHORT'}
+          {ind?.composite_signal && <AlignmentBadge direction={direction} indicatorSignal={ind.composite_signal} />}
+          {ind?.composite_signal && <CompositeBadge signal={ind.composite_signal} />}
+          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+            isLong ? 'bg-emerald-800/50 text-emerald-200' :
+            isShort ? 'bg-red-800/50 text-red-200' :
+            'bg-blue-800/50 text-blue-200'
+          }`}>
+            {direction}
           </span>
         </div>
       </div>
 
-      {/* Two-column: screener | technical indicators */}
+      {/* Two-column: screener data | technical indicators */}
       <div className="flex gap-2">
-        {/* Left: screener data */}
         <div className="w-24 shrink-0 space-y-1 text-[10px]">
-          <div className="flex items-center justify-between text-market-400">
-            <span className="flex items-center gap-0.5">
-              RS Z
-              <button onClick={(e) => { e.stopPropagation(); onRsInfo?.(); }} className="text-market-500 hover:text-market-300 leading-none">
-                <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </button>
-            </span>
-            <span className={isLong ? 'text-emerald-300' : 'text-red-300'}>{rs_zscore > 0 ? '+' : ''}{typeof rs_zscore === 'number' ? rs_zscore.toFixed(2) : rs_zscore}</span>
-          </div>
+          {vix_zone && (
+            <div className="flex justify-between text-market-400">
+              <span>VIX Zone</span>
+              <span className="text-market-300">{vixLabel}</span>
+            </div>
+          )}
+          {bucket && (
+            <div className="flex justify-between text-market-400">
+              <span>Bucket</span>
+              <span className={colors.border.replace('border-', 'text-').replace('/40', '') || 'text-market-300'}>{bktLabel}</span>
+            </div>
+          )}
+          {group && (
+            <div className="flex justify-between text-market-400">
+              <span>Group</span>
+              <span className="text-market-300">{group.replace(/_/g, ' ')}</span>
+            </div>
+          )}
+          {price != null && (
+            <div className="flex justify-between text-market-400">
+              <span>Price</span>
+              <span className="text-white">${typeof price === 'number' ? price.toFixed(2) : price}</span>
+            </div>
+          )}
+          {qty != null && (
+            <div className="flex justify-between text-market-400">
+              <span>Qty</span>
+              <span className="text-white">{qty}</span>
+            </div>
+          )}
+          {rs_zscore != null && (
+            <div className="flex items-center justify-between text-market-400">
+              <span className="flex items-center gap-0.5">
+                RS Z
+                <button onClick={(e) => { e.stopPropagation(); onRsInfo?.(); }} className="text-market-500 hover:text-market-300 leading-none">
+                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </button>
+              </span>
+              <span className={isLong ? 'text-emerald-300' : isShort ? 'text-red-300' : 'text-market-300'}>
+                {rs_zscore > 0 ? '+' : ''}{typeof rs_zscore === 'number' ? rs_zscore.toFixed(2) : rs_zscore}
+              </span>
+            </div>
+          )}
           {beta_vix != null && (
             <div className="flex justify-between text-market-400">
               <span>VIX β</span>
-              <span className={beta_vix < 0 ? 'text-rose-300' : 'text-emerald-300'}>{beta_vix > 0 ? '+' : ''}{typeof beta_vix === 'number' ? beta_vix.toFixed(2) : beta_vix}</span>
+              <span className={beta_vix < 0 ? 'text-rose-300' : 'text-emerald-300'}>
+                {beta_vix > 0 ? '+' : ''}{typeof beta_vix === 'number' ? beta_vix.toFixed(2) : beta_vix}
+              </span>
             </div>
           )}
           {beta_dxy != null && (
             <div className="flex justify-between text-market-400">
               <span>DXY β</span>
-              <span className={beta_dxy < 0 ? 'text-rose-300' : 'text-emerald-300'}>{beta_dxy > 0 ? '+' : ''}{typeof beta_dxy === 'number' ? beta_dxy.toFixed(2) : beta_dxy}</span>
+              <span className={beta_dxy < 0 ? 'text-rose-300' : 'text-emerald-300'}>
+                {beta_dxy > 0 ? '+' : ''}{typeof beta_dxy === 'number' ? beta_dxy.toFixed(2) : beta_dxy}
+              </span>
             </div>
           )}
           {beta_group && (
             <div className="flex justify-between text-market-400">
               <span>Group</span>
-              <span className="text-market-300">{beta_group.replace('group_', '').replace('_', ' ')}</span>
+              <span className="text-market-300">{beta_group.replace('group_', '').replace(/_/g, ' ')}</span>
             </div>
           )}
         </div>
-        {/* Right: technical indicators */}
         <div className="flex-1 min-w-0">
           <IndicatorPanel ind={ind} />
         </div>
@@ -475,52 +462,30 @@ function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_gr
   )
 }
 
-function BucketSection({ title, signals, style, onChart, stockNames, indicators, held }) {
-  if (!signals || signals.length === 0) return null
+// ── Section ────────────────────────────────────────────────────────────
+
+function Section({ title, items, onChart, stockNames, onRsInfo, indicators }) {
+  if (!items || items.length === 0) return null
+  const headerColor =
+    title === 'Long' ? 'text-emerald-400' :
+    title === 'Short' ? 'text-red-400' :
+    'text-blue-400'
   return (
     <div className="mb-6">
-      <h3 className={`text-sm font-semibold uppercase tracking-wider mb-3 ${style.text}`}>{title} ({signals.length})</h3>
+      <h2 className={`text-sm font-semibold uppercase tracking-wider mb-3 ${headerColor}`}>
+        {title} ({items.length})
+      </h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {signals.map(s => <SignalCard key={s.id} signal={s} onChart={onChart} stockNames={stockNames} ind={indicators?.[indicatorKey(s.ticker)]} held={held} />)}
-      </div>
-    </div>
-  )
-}
-
-// ── Holdings Card ────────────────────────────────────────────────────
-
-const BUCKET_LABELS = { base_yield: 'Base Yield', alpha: 'Alpha', convexity: 'Convexity', existing: 'Existing' }
-
-function HoldingsCard({ pos, onChart, stockNames, ind }) {
-  const ticker = pos.ticker
-  const name = stockNames?.[ticker] || stockNames?.[ticker.replace(/\.(US|HK)$/, '')] || ''
-  const displayBucket = BUCKET_LABELS[pos.bucket] || pos.bucket || '—'
-  return (
-    <div
-      className="bg-blue-900/20 border border-blue-700/40 rounded-lg p-3 cursor-pointer transition-colors group hover:bg-blue-900/30"
-      onClick={() => onChart?.(ticker)}
-    >
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="font-bold text-white text-sm truncate">{ticker}</span>
-          {name && <span className="text-[10px] text-market-500 truncate hidden sm:block">{name}</span>}
-        </div>
-        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-800/40 text-blue-300 shrink-0">Held</span>
-      </div>
-      <div className="flex gap-2">
-        <div className="w-24 shrink-0 space-y-1 text-[10px]">
-          <div className="flex justify-between text-market-400">
-            <span>Qty</span>
-            <span className="text-white">{pos.position_qty ?? '—'}</span>
-          </div>
-          <div className="flex justify-between text-market-400">
-            <span>Bucket</span>
-            <span className="text-blue-300">{displayBucket}</span>
-          </div>
-        </div>
-        <div className="flex-1 min-w-0">
-          <IndicatorPanel ind={ind} />
-        </div>
+        {items.map(item => (
+          <UnifiedCard
+            key={item.ticker}
+            item={item}
+            onChart={onChart}
+            stockNames={stockNames}
+            onRsInfo={onRsInfo}
+            ind={indicators?.[indicatorKey(item.ticker)]}
+          />
+        ))}
       </div>
     </div>
   )
@@ -533,13 +498,12 @@ export default function Dashboard() {
   const [signals, setSignals] = useState([])
   const [hkWatchlist, setHkWatchlist] = useState([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState('all')
-  const [chartSymbol, setChartSymbol] = useState(null) // symbol to show chart for, or null
-  const [stockNames, setStockNames] = useState({}) // {symbol: name}
-  const [rsExplainer, setRsExplainer] = useState(null) // show RS tooltip
-  const [indicatorSignals, setIndicatorSignals] = useState({}) // {ticker: indicator_row}
-  const [regime, setRegime] = useState(null) // current market regime
-  const [positions, setPositions] = useState([]) // [{ticker, position_qty, market_value}]
+  const [chartSymbol, setChartSymbol] = useState(null)
+  const [stockNames, setStockNames] = useState({})
+  const [rsExplainer, setRsExplainer] = useState(false)
+  const [indicatorSignals, setIndicatorSignals] = useState({})
+  const [regime, setRegime] = useState(null)
+  const [positions, setPositions] = useState([])
 
   // Load stock names map
   useEffect(() => {
@@ -548,13 +512,11 @@ export default function Dashboard() {
       .then(data => {
         const flat = {}
         for (const market of ['us', 'hk']) {
-          if (data[market]) {
-            Object.assign(flat, data[market])
-          }
+          if (data[market]) Object.assign(flat, data[market])
         }
         setStockNames(flat)
       })
-      .catch(() => {}) // silently fail, names are optional
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -566,20 +528,14 @@ export default function Dashboard() {
 
     setConnected(true)
 
-    supabase
-      .from('signals')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(50)
+    supabase.from('signals').select('*').order('created_at', { ascending: false }).limit(50)
       .then(({ data, error }) => {
         if (!error && data) {
-          // Dedup: keep only the latest signal per ticker
           const seen = new Set()
           const unique = []
           for (const row of data) {
-            const key = row.ticker
-            if (!seen.has(key)) {
-              seen.add(key)
+            if (!seen.has(row.ticker)) {
+              seen.add(row.ticker)
               unique.push(row)
             }
           }
@@ -587,11 +543,7 @@ export default function Dashboard() {
         }
       })
 
-    supabase
-      .from('watchlist_hk')
-      .select('*')
-      .order('id', { ascending: false })
-      .limit(50)
+    supabase.from('watchlist_hk').select('*').order('id', { ascending: false }).limit(50)
       .then(({ data, error }) => {
         if (!error && data) {
           const latestBatch = data[0]?.generated_at
@@ -600,52 +552,33 @@ export default function Dashboard() {
         setLoading(false)
       })
 
-    // Fetch latest indicator signals
-    supabase
-      .from('indicator_signals')
-      .select('*')
-      .order('calculated_at', { ascending: false })
-      .limit(100)
+    supabase.from('indicator_signals').select('*').order('calculated_at', { ascending: false }).limit(100)
       .then(({ data, error }) => {
         if (!error && data) {
           const map = {}
           for (const row of data) {
-            if (!map[row.ticker]) {
-              map[row.ticker] = row
-            }
+            if (!map[row.ticker]) map[row.ticker] = row
           }
           setIndicatorSignals(map)
         }
       })
 
-    // Fetch latest regime
-    supabase
-      .from('regime')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(1)
+    supabase.from('regime').select('*').order('created_at', { ascending: false }).limit(1)
       .then(({ data }) => {
         if (data && data.length > 0) setRegime(data[0])
       })
 
-    // Fetch positions (held stocks)
-    supabase
-      .from('portfolio')
-      .select('ticker,position_qty,market_value')
+    supabase.from('portfolio').select('ticker,position_qty,market_value,bucket')
       .then(({ data }) => {
         if (data) setPositions(data)
       })
-    // Real-time: listen for new signals (dedup by ticker)
-    const channel = supabase
-      .channel('signals')
+
+    const channel = supabase.channel('signals')
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'signals' },
         (payload) => setSignals(prev => {
           const existing = prev.find(s => s.ticker === payload.new.ticker)
-          if (existing) {
-            // Replace outdated signal with newer one
-            return prev.map(s => s.ticker === payload.new.ticker ? payload.new : s)
-          }
+          if (existing) return prev.map(s => s.ticker === payload.new.ticker ? payload.new : s)
           return [payload.new, ...prev]
         })
       )
@@ -661,36 +594,108 @@ export default function Dashboard() {
         <div className="text-center max-w-md px-4">
           <div className="text-4xl mb-4">🔒</div>
           <h1 className="text-2xl font-bold text-white mb-3">Dashboard Coming Soon</h1>
-          <p className="text-market-400 mb-2">
-            The live dashboard will appear here once Supabase is connected.
-          </p>
+          <p className="text-market-400 mb-2">The live dashboard will appear here once Supabase is connected.</p>
           <p className="text-sm text-market-500">
             Set <code className="text-green-400 text-xs bg-market-800 px-1 py-0.5 rounded">NEXT_PUBLIC_SUPABASE_URL</code> and{' '}
             <code className="text-green-400 text-xs bg-market-800 px-1 py-0.5 rounded">NEXT_PUBLIC_SUPABASE_ANON_KEY</code>{' '}
             to enable.
           </p>
-          <a
-            href="/"
-            className="inline-block mt-8 px-6 py-2.5 rounded-lg border border-market-700 text-market-300 text-sm hover:text-white transition-colors"
-          >
-            ← Back to Home
-          </a>
+          <a href="/" className="inline-block mt-8 px-6 py-2.5 rounded-lg border border-market-700 text-market-300 text-sm hover:text-white transition-colors">← Back to Home</a>
         </div>
       </div>
     )
   }
 
-  // ── Group signals ──
-  const byVixZone = groupBy(signals, s => s.vix_zone || 'unknown')
-  const zoneOrder = ['high_beta', 'moderate_beta', 'low_beta', 'defensive']
+  // ── Build unified item list ───────────────────────────────────────────
+  // 1) From signals table (LONG/SHORT)
+  // 2) From HK watchlist (long/short candidates)
+  // 3) From portfolio (HOLD) — only tickers NOT already in LONG or SHORT
 
-  const hkLong = hkWatchlist.filter(r => r.candidate_type === 'long').sort((a, b) => b.rs_zscore - a.rs_zscore)
-  const hkShort = hkWatchlist.filter(r => r.candidate_type === 'short').sort((a, b) => a.rs_zscore - b.rs_zscore)
+  const dirSignalMap = {}  // ticker -> { item }
 
-  // Held positions set
+  // Signals table
+  for (const s of signals) {
+    const meta = s.signal_json || {}
+    dirSignalMap[s.ticker] = {
+      ticker: s.ticker,
+      direction: s.direction,
+      isHeld: false,  // will set below
+      price: meta.price,
+      vix_zone: s.vix_zone,
+      bucket: s.bucket,
+      group: meta.group,
+    }
+  }
+
+  // HK watchlist — long candidates → LONG, short → SHORT
+  for (const r of hkWatchlist) {
+    const dir = r.candidate_type === 'long' ? 'LONG' : 'SHORT'
+    // If already exists from signals, enrich (don't override direction)
+    if (dirSignalMap[r.symbol]) {
+      dirSignalMap[r.symbol].rs_zscore = r.rs_zscore
+      dirSignalMap[r.symbol].beta_vix = r.beta_vix
+      dirSignalMap[r.symbol].beta_dxy = r.beta_dxy
+      dirSignalMap[r.symbol].beta_group = r.beta_group
+    } else {
+      dirSignalMap[r.symbol] = {
+        ticker: r.symbol,
+        direction: dir,
+        isHeld: false,
+        price: null,
+        vix_zone: 'hk',
+        bucket: 'alpha',
+        group: null,
+        rs_zscore: r.rs_zscore,
+        beta_vix: r.beta_vix,
+        beta_dxy: r.beta_dxy,
+        beta_group: r.beta_group,
+      }
+    }
+  }
+
+  // Portfolio — mark isHeld on existing items, create HOLD items for rest
+  const portfolioTickers = new Set(positions.map(p => p.ticker))
+  const posMap = {}
+  for (const p of positions) {
+    posMap[p.ticker] = p
+    if (dirSignalMap[p.ticker]) {
+      dirSignalMap[p.ticker].isHeld = true
+      if (p.position_qty != null) dirSignalMap[p.ticker].qty = p.position_qty
+    } else {
+      dirSignalMap[p.ticker] = {
+        ticker: p.ticker,
+        direction: 'HOLD',
+        isHeld: true,
+        price: null,
+        vix_zone: null,
+        bucket: p.bucket || 'existing',
+        group: null,
+        qty: p.position_qty,
+      }
+    }
+  }
+
+  // Partition by direction
+  const longItems = []
+  const shortItems = []
+  const holdItems = []
+
+  for (const ticker in dirSignalMap) {
+    const item = dirSignalMap[ticker]
+    if (item.direction === 'LONG') longItems.push(item)
+    else if (item.direction === 'SHORT') shortItems.push(item)
+    else holdItems.push(item)
+  }
+
+  // Sort: by price descending for Long/Hold, ascending for Short
+  longItems.sort((a, b) => (b.price ?? 0) - (a.price ?? 0))
+  shortItems.sort((a, b) => (a.price ?? 0) - (b.price ?? 0))
+  holdItems.sort((a, b) => (a.ticker || '').localeCompare(b.ticker || ''))
+
   const heldSet = new Set(positions.map(p => p.ticker))
+  const hasAny = longItems.length > 0 || shortItems.length > 0 || holdItems.length > 0
 
-  // ── Chart modal ──
+  // ── Handlers ──
   const openChart = useCallback((symbol) => setChartSymbol(symbol), [])
   const closeChart = useCallback(() => setChartSymbol(null), [])
 
@@ -699,53 +704,15 @@ export default function Dashboard() {
     <div className="min-h-screen bg-market-950 text-market-100">
       <div className="max-w-6xl mx-auto px-4 py-8">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-2xl font-bold text-white">Dashboard</h1>
             <p className="text-sm text-market-400 mt-1">
-              {signals.length} signals · {hkWatchlist.length} HK watchlist · {Object.keys(indicatorSignals).length} indicators
+              {longItems.length} long · {holdItems.length} hold · {shortItems.length} short
               {regime && <span className="ml-2">{regimeBadge(regime)}</span>}
             </p>
           </div>
-
-          {/* Your Holdings — always visible when positions exist */}
-          {positions.length > 0 && (
-            <div className="mb-6">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-blue-400 mb-3">
-                Your Holdings ({positions.length})
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {positions.map(p => (
-                  <HoldingsCard key={p.ticker} pos={p} onChart={openChart} stockNames={stockNames} ind={indicatorSignals[indicatorKey(p.ticker)]} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          <a href="/" className="text-sm text-market-500 hover:text-market-300 transition-colors">
-            ← Home
-          </a>
-        </div>
-
-        {/* Tab bar */}
-        <div className="flex gap-1 mb-6 border-b border-market-800">
-          {[
-            { key: 'all', label: 'All' },
-            { key: 'us', label: 'US Signals' },
-            { key: 'hk', label: 'HK Watchlist' },
-          ].map(t => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-                tab === t.key
-                  ? 'bg-market-800 text-white border-b-2 border-blue-500'
-                  : 'text-market-500 hover:text-market-300'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
+          <a href="/" className="text-sm text-market-500 hover:text-market-300 transition-colors">← Home</a>
         </div>
 
         {loading && (
@@ -755,146 +722,23 @@ export default function Dashboard() {
           </div>
         )}
 
-        {!loading && tab !== 'hk' && (
-          <div>
-            <div className="mb-2">
-              <h2 className="text-lg font-semibold text-white">US Signals</h2>
-              <p className="text-xs text-market-500 mb-4">From signal engine · Click any ticker for chart · Auto-refreshes in real-time</p>
-            </div>
-
-            {signals.length === 0 ? (
-              <div className="text-center py-12 border border-dashed border-market-700 rounded-lg">
-                <p className="text-market-500">No signals yet. The engine will publish them here when it runs.</p>
-              </div>
-            ) : (
-              zoneOrder.map(zone => (
-                <BucketSection
-                  key={zone}
-                  title={VIX_ZONE_LABELS[zone]?.label || zone}
-                  signals={byVixZone[zone] || []}
-                  style={BUCKET_COLORS.alpha}
-                  onChart={openChart}
-                  stockNames={stockNames}
-                  indicators={indicatorSignals}
-                  held={heldSet}
-                />
-              ))
-            )}
-
-            {byVixZone['unknown'] && byVixZone['unknown'].length > 0 && (
-              <BucketSection
-                title="Other"
-                signals={byVixZone['unknown']}
-                style={BUCKET_COLORS.convexity}
-                onChart={openChart}
-                stockNames={stockNames}
-                indicators={indicatorSignals}
-                held={heldSet}
-              />
-            )}
+        {!loading && !hasAny && (
+          <div className="text-center py-12 border border-dashed border-market-700 rounded-lg">
+            <p className="text-market-500">No signals or holdings yet. Data will appear here when available.</p>
           </div>
         )}
 
-        {!loading && tab !== 'us' && (
-          <div>
-            <div className="mb-2">
-              <h2 className="text-lg font-semibold text-white">HK Watchlist</h2>
-              <p className="text-xs text-market-500 mb-4">
-                From Longbridge market data · Click any symbol for chart · Updated daily after market close
-              </p>
-            </div>
-
-            {hkWatchlist.length === 0 ? (
-              <div className="text-center py-12 border border-dashed border-market-700 rounded-lg">
-                <p className="text-market-500">HK watchlist will appear here after the daily screening runs.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div>
-                  <h3 className="text-sm font-semibold uppercase tracking-wider text-emerald-400 mb-3">
-                    Top Long Candidates ({hkLong.length})
-                  </h3>
-                  <div className="space-y-2">
-                    {hkLong.map((r, i) => (
-                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} ind={indicatorSignals[r.symbol]} held={heldSet} />
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-semibold uppercase tracking-wider text-red-400 mb-3">
-                    Top Short Candidates ({hkShort.length})
-                  </h3>
-                  <div className="space-y-2">
-                    {hkShort.map((r, i) => (
-                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} ind={indicatorSignals[r.symbol]} held={heldSet} />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+        {!loading && hasAny && (
+          <>
+            <Section title="Long" items={longItems} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer(true)} indicators={indicatorSignals} />
+            <Section title="Hold" items={holdItems} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer(true)} indicators={indicatorSignals} />
+            <Section title="Short" items={shortItems} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer(true)} indicators={indicatorSignals} />
+          </>
         )}
       </div>
 
-      {/* RS Z-Score Explainer */}
-      {rsExplainer && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-             onClick={() => setRsExplainer(null)}>
-          <div className="bg-market-900 border border-market-700 rounded-xl shadow-2xl max-w-lg w-full p-6" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="text-lg font-bold text-white">What is RS Z-Score?</h3>
-                <p className="text-xs text-market-400 mt-1">Relative Strength Z-Score</p>
-              </div>
-              <button onClick={() => setRsExplainer(null)} className="text-market-400 hover:text-white p-1">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="space-y-3 text-sm text-market-300">
-              <p>
-                <strong className="text-white">RS Z-Score</strong> measures how a stock performed
-                relative to its peer group over the past month.
-              </p>
-              <div className="bg-market-800 rounded-lg p-3 text-xs space-y-2">
-                <div className="flex justify-between">
-                  <span>Calculation:</span>
-                  <span className="text-market-400 text-right w-3/5">(stock_return − group_mean) ÷ group_std</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Groups are:</span>
-                  <span className="text-market-400 text-right w-3/5">Stocks with similar VIX beta</span>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-emerald-400 font-bold">+Z</span>
-                  <span>Outperforming peers → <strong className="text-white">Long candidates</strong> (top 10%)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-red-400 font-bold">−Z</span>
-                  <span>Underperforming peers → <strong className="text-white">Short candidates</strong> (bottom 10%)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-market-500 font-bold">|Z| &gt; 2</span>
-                  <span>Statistically significant — strong momentum signal</span>
-                </div>
-              </div>
-              <p className="text-xs text-market-500 italic mt-2">
-                RS Z-Score is a cross-sectional metric comparing stocks within the same
-                VIX beta group. It captures relative momentum adjusted for macro risk exposure.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Chart Modal — key forces clean unmount/remount on symbol change */}
-      {chartSymbol && (
-        <ChartModal key={chartSymbol} symbol={chartSymbol} onClose={closeChart} />
-      )}
+      {rsExplainer && <RsExplainerModal onClose={() => setRsExplainer(false)} />}
+      {chartSymbol && <ChartModal key={chartSymbol} symbol={chartSymbol} onClose={closeChart} />}
     </div>
   )
 }
