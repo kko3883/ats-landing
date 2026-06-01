@@ -358,7 +358,7 @@ function UnifiedCard({ item, onChart, stockNames, onRsInfo, ind }) {
 
   // ── Screener fields for the data grid ──
   const screenerFields = [
-    vix_zone ? { label: 'VIX Zone', display: vixLabel, color: vixColor } : null,
+    vix_zone && VIX_ZONE_LABELS[vix_zone] ? { label: 'VIX Zone', display: vixLabel, color: vixColor } : null,
     bucket ? { label: 'Bucket', display: bktLabel, color: colors.accent } : null,
     group ? { label: 'Group', display: groupLabel, color: 'text-market-300' } : null,
     qty != null ? { label: 'Qty', display: qty, color: 'text-white' } : null,
