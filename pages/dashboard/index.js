@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import supabase from '../../lib/supabase'
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -55,30 +55,13 @@ function isHkSymbol(symbol) {
   return symbol.endsWith('.HK')
 }
 
-// ── TradingView Chart Modal ──────────────────────────────────────────────
+// ── TradingView Chart Modal (widget script, not iframe) ────────────────────
 
 function ChartModal({ symbol, onClose }) {
   const tvSymbol = toTradingViewSymbol(symbol)
   const hk = isHkSymbol(symbol)
-
-  // Build TradingView embed URL with params
-  const params = new URLSearchParams({
-    symbol: tvSymbol,
-    interval: 'D',
-    timezone: hk ? 'Asia/Hong_Kong' : 'America/New_York',
-    theme: 'dark',
-    style: '1',
-    locale: 'en',
-    toolbar_bg: '#0d1117',
-    enable_publishing: 'false',
-    hide_side_toolbar: 'false',
-    allow_symbol_change: 'false',
-    save_image: 'false',
-    // Studies: RSI(14) + SMA(50)
-    studies: '["RSI@tv-basicstudies","MASimple@tv-basicstudies"]',
-    studies_overrides: '{"MASimple.length":50}',
-  })
-  const iframeUrl = `https://www.tradingview.com/widget/advanced-chart/?${params.toString()}`
+  const containerRef = useRef(null)
+  const widgetRef = useRef(null)
 
   // Close on Escape key
   useEffect(() => {
@@ -86,6 +69,53 @@ function ChartModal({ symbol, onClose }) {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
+
+  // Load TradingView script + create widget
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    // Clean any leftover widget from previous mount
+    container.innerHTML = ''
+    if (widgetRef.current) {
+      try { widgetRef.current.remove() } catch {}
+      widgetRef.current = null
+    }
+
+    const script = document.createElement('script')
+    script.src = 'https://s3.tradingview.com/tv.js'
+    script.async = true
+    script.onload = () => {
+      if (!container || !window.TradingView) return
+      widgetRef.current = new window.TradingView.widget({
+        container_id: container.id,
+        symbol: tvSymbol,
+        interval: 'D',
+        timezone: hk ? 'Asia/Hong_Kong' : 'America/New_York',
+        theme: 'dark',
+        style: '1',
+        locale: 'en',
+        toolbar_bg: '#0d1117',
+        enable_publishing: false,
+        hide_side_toolbar: false,
+        allow_symbol_change: false,
+        save_image: false,
+        studies: ['RSI@tv-basicstudies', 'MASimple@tv-basicstudies'],
+        studies_overrides: { 'MASimple.length': 50 },
+        autosize: true,
+      })
+    }
+    document.body.appendChild(script)
+
+    return () => {
+      // Cleanup
+      if (widgetRef.current) {
+        try { widgetRef.current.remove() } catch {}
+        widgetRef.current = null
+      }
+      if (script.parentNode) script.parentNode.removeChild(script)
+    }
+  }, [tvSymbol, hk])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
@@ -107,16 +137,13 @@ function ChartModal({ symbol, onClose }) {
           </button>
         </div>
 
-        {/* Chart iframe — completely isolated load per symbol */}
-        <div className="w-full" style={{ height: '480px' }}>
-          <iframe
-            title={`Chart: ${symbol}`}
-            src={iframeUrl}
-            className="w-full h-full border-0"
-            loading="lazy"
-            allow="fullscreen"
-          />
-        </div>
+        {/* Chart container — widget mounts here */}
+        <div
+          id={`tv-${symbol.replace(/[^a-zA-Z0-9]/g, '-')}`}
+          ref={containerRef}
+          className="w-full"
+          style={{ height: '480px' }}
+        />
       </div>
     </div>
   )
