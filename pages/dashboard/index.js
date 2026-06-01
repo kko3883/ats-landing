@@ -487,6 +487,45 @@ function BucketSection({ title, signals, style, onChart, stockNames, indicators,
   )
 }
 
+// ── Holdings Card ────────────────────────────────────────────────────
+
+const BUCKET_LABELS = { base_yield: 'Base Yield', alpha: 'Alpha', convexity: 'Convexity', existing: 'Existing' }
+
+function HoldingsCard({ pos, onChart, stockNames, ind }) {
+  const ticker = pos.ticker
+  const name = stockNames?.[ticker] || stockNames?.[ticker.replace(/\.(US|HK)$/, '')] || ''
+  const displayBucket = BUCKET_LABELS[pos.bucket] || pos.bucket || '—'
+  return (
+    <div
+      className="bg-blue-900/20 border border-blue-700/40 rounded-lg p-3 cursor-pointer transition-colors group hover:bg-blue-900/30"
+      onClick={() => onChart?.(ticker)}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-bold text-white text-sm truncate">{ticker}</span>
+          {name && <span className="text-[10px] text-market-500 truncate hidden sm:block">{name}</span>}
+        </div>
+        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-800/40 text-blue-300 shrink-0">Held</span>
+      </div>
+      <div className="flex gap-2">
+        <div className="w-24 shrink-0 space-y-1 text-[10px]">
+          <div className="flex justify-between text-market-400">
+            <span>Qty</span>
+            <span className="text-white">{pos.position_qty ?? '—'}</span>
+          </div>
+          <div className="flex justify-between text-market-400">
+            <span>Bucket</span>
+            <span className="text-blue-300">{displayBucket}</span>
+          </div>
+        </div>
+        <div className="flex-1 min-w-0">
+          <IndicatorPanel ind={ind} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Component ──────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -500,7 +539,7 @@ export default function Dashboard() {
   const [rsExplainer, setRsExplainer] = useState(null) // show RS tooltip
   const [indicatorSignals, setIndicatorSignals] = useState({}) // {ticker: indicator_row}
   const [regime, setRegime] = useState(null) // current market regime
-  const [positions, setPositions] = useState([]) // held tickers
+  const [positions, setPositions] = useState([]) // [{ticker, position_qty, market_value}]
 
   // Load stock names map
   useEffect(() => {
@@ -592,9 +631,9 @@ export default function Dashboard() {
     // Fetch positions (held stocks)
     supabase
       .from('portfolio')
-      .select('ticker')
+      .select('ticker,position_qty,market_value')
       .then(({ data }) => {
-        if (data) setPositions(data.map(r => r.ticker))
+        if (data) setPositions(data)
       })
     // Real-time: listen for new signals (dedup by ticker)
     const channel = supabase
@@ -649,7 +688,7 @@ export default function Dashboard() {
   const hkShort = hkWatchlist.filter(r => r.candidate_type === 'short').sort((a, b) => a.rs_zscore - b.rs_zscore)
 
   // Held positions set
-  const heldSet = new Set(positions)
+  const heldSet = new Set(positions.map(p => p.ticker))
 
   // ── Chart modal ──
   const openChart = useCallback((symbol) => setChartSymbol(symbol), [])
@@ -668,6 +707,21 @@ export default function Dashboard() {
               {regime && <span className="ml-2">{regimeBadge(regime)}</span>}
             </p>
           </div>
+
+          {/* Your Holdings — always visible when positions exist */}
+          {positions.length > 0 && (
+            <div className="mb-6">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-blue-400 mb-3">
+                Your Holdings ({positions.length})
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {positions.map(p => (
+                  <HoldingsCard key={p.ticker} pos={p} onChart={openChart} stockNames={stockNames} ind={indicatorSignals[indicatorKey(p.ticker)]} />
+                ))}
+              </div>
+            </div>
+          )}
+
           <a href="/" className="text-sm text-market-500 hover:text-market-300 transition-colors">
             ← Home
           </a>
