@@ -153,9 +153,67 @@ function ChartModal({ symbol, onClose }) {
   )
 }
 
-// ── Card Components ─────────────────────────────────────────────────────
+// ── Indicator Display ──────────────────────────────────────────────────
 
-function SignalCard({ signal, onChart, stockNames }) {
+const SIGNAL_COLORS = {
+  buy: 'bg-emerald-700/80 text-emerald-100',
+  sell: 'bg-red-700/80 text-red-100',
+  hold: 'bg-market-600/80 text-market-200',
+}
+
+const COMPOSITE_COLORS = {
+  strong_buy: { bg: 'bg-emerald-800', text: 'text-emerald-200' },
+  buy: { bg: 'bg-emerald-700', text: 'text-emerald-100' },
+  hold: { bg: 'bg-market-600', text: 'text-market-200' },
+  sell: { bg: 'bg-red-700', text: 'text-red-100' },
+  strong_sell: { bg: 'bg-red-800', text: 'text-red-200' },
+}
+
+function IndicatorDots({ ind }) {
+  if (!ind) return null
+  const indicators = [
+    { key: 'macd_signal', label: 'MACD' },
+    { key: 'adx_signal', label: 'ADX' },
+    { key: 'rsi_signal', label: 'RSI' },
+    { key: 'stoch_signal', label: 'Stoch' },
+    { key: 'mfi_signal', label: 'MFI' },
+    { key: 'obv_signal', label: 'OBV' },
+    { key: 'bb_signal', label: '%B' },
+  ]
+  return (
+    <div className="flex flex-wrap gap-1 mt-2">
+      {indicators.map(({ key, label }) => {
+        const sig = ind[key]
+        const color = SIGNAL_COLORS[sig] || SIGNAL_COLORS.hold
+        return (
+          <span key={key}
+            className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${color}`}
+            title={`${label}: ${sig}`}
+          >
+            {label}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
+function CompositeBadge({ signal }) {
+  const colors = COMPOSITE_COLORS[signal] || COMPOSITE_COLORS.hold
+  return (
+    <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${colors.bg} ${colors.text}`}>
+      {signal ? signal.replace('_', ' ') : 'hold'}
+    </span>
+  )
+}
+
+// Helper: normalize ticker key for indicator lookup
+function indicatorKey(ticker) {
+  if (ticker.endsWith('.HK') || ticker.endsWith('.US')) return ticker
+  return `${ticker}.US`
+}
+
+function SignalCard({ signal, onChart, stockNames, ind }) {
   const bucket = signal.bucket || 'alpha'
   const style = BUCKET_COLORS[bucket] || BUCKET_COLORS.alpha
   const meta = signal.signal_json || {}
@@ -178,9 +236,12 @@ function SignalCard({ signal, onChart, stockNames }) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
           </svg>
         </div>
-        <span className={`text-xs font-mono px-2 py-0.5 rounded-full shrink-0 ${signal.direction === 'LONG' ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
-          {signal.direction}
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <CompositeBadge signal={ind?.composite_signal} />
+          <span className={`text-xs font-mono px-2 py-0.5 rounded-full ${signal.direction === 'LONG' ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
+            {signal.direction}
+          </span>
+        </div>
       </div>
       <div className="space-y-1 text-xs text-market-300">
         <div className="flex justify-between">
@@ -199,16 +260,8 @@ function SignalCard({ signal, onChart, stockNames }) {
             <span className="text-red-400">${typeof meta.stop_loss === 'number' ? meta.stop_loss.toFixed(2) : meta.stop_loss}</span>
           </div>
         )}
-        {/* Indicator pills */}
-        <div className="flex flex-wrap gap-1.5 mt-2">
-          {ctx.breakout && <span className="text-xs bg-blue-800 text-blue-200 px-1.5 py-0.5 rounded">Breakout</span>}
-          {ctx.sma_crossover && <span className="text-xs bg-purple-800 text-purple-200 px-1.5 py-0.5 rounded">Golden X</span>}
-          {ctx.rsi_lt === true && <span className="text-xs bg-orange-800 text-orange-200 px-1.5 py-0.5 rounded">Oversold</span>}
-          {ctx.rsi_gt === true && <span className="text-xs bg-rose-800 text-rose-200 px-1.5 py-0.5 rounded">Overbought</span>}
-          {ctx.price_above_sma && <span className="text-xs bg-emerald-800 text-emerald-200 px-1.5 py-0.5 rounded">Above SMA</span>}
-          {ctx.price_below_sma && <span className="text-xs bg-red-800 text-red-200 px-1.5 py-0.5 rounded">Below SMA</span>}
-          {ctx.pullback === true && <span className="text-xs bg-cyan-800 text-cyan-200 px-1.5 py-0.5 rounded">Pullback</span>}
-        </div>
+        {/* Indicator dots */}
+        <IndicatorDots ind={ind} />
         {meta.strategy_name && (
           <div className="flex justify-between pt-1">
             <span className="text-market-500 italic">{meta.strategy_name.replace(/_/g, ' ')}</span>
@@ -219,7 +272,7 @@ function SignalCard({ signal, onChart, stockNames }) {
   )
 }
 
-function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_group, onChart, stockNames, onRsInfo }) {
+function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_group, onChart, stockNames, onRsInfo, ind }) {
   const isLong = candidate_type === 'long'
   const name = stockNames?.[symbol] || ''
   return (
@@ -237,9 +290,12 @@ function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_gr
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
           </svg>
         </div>
-        <span className={`text-xs font-mono px-1.5 py-0.5 rounded shrink-0 ${isLong ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
-          {isLong ? 'LONG' : 'SHORT'}
-        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <CompositeBadge signal={ind?.composite_signal} />
+          <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${isLong ? 'bg-emerald-800 text-emerald-200' : 'bg-red-800 text-red-200'}`}>
+            {isLong ? 'LONG' : 'SHORT'}
+          </span>
+        </div>
       </div>
       <div className="text-xs text-market-400 space-y-0.5">
         <div className="flex justify-between items-center">
@@ -271,18 +327,19 @@ function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_gr
             <span className="text-market-300">{beta_group.replace('group_', '')}</span>
           </div>
         )}
+        <IndicatorDots ind={ind} />
       </div>
     </div>
   )
 }
 
-function BucketSection({ title, signals, style, onChart, stockNames }) {
+function BucketSection({ title, signals, style, onChart, stockNames, indicators }) {
   if (!signals || signals.length === 0) return null
   return (
     <div className="mb-6">
       <h3 className={`text-sm font-semibold uppercase tracking-wider mb-3 ${style.text}`}>{title} ({signals.length})</h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {signals.map(s => <SignalCard key={s.id} signal={s} onChart={onChart} stockNames={stockNames} />)}
+        {signals.map(s => <SignalCard key={s.id} signal={s} onChart={onChart} stockNames={stockNames} ind={indicators?.[indicatorKey(s.ticker)]} />)}
       </div>
     </div>
   )
@@ -299,6 +356,7 @@ export default function Dashboard() {
   const [chartSymbol, setChartSymbol] = useState(null) // symbol to show chart for, or null
   const [stockNames, setStockNames] = useState({}) // {symbol: name}
   const [rsExplainer, setRsExplainer] = useState(null) // show RS tooltip
+  const [indicatorSignals, setIndicatorSignals] = useState({}) // {ticker: indicator_row}
 
   // Load stock names map
   useEffect(() => {
@@ -357,6 +415,24 @@ export default function Dashboard() {
           setHkWatchlist(latestBatch ? data.filter(r => r.generated_at === latestBatch) : data)
         }
         setLoading(false)
+      })
+
+    // Fetch latest indicator signals
+    supabase
+      .from('indicator_signals')
+      .select('*')
+      .order('calculated_at', { ascending: false })
+      .limit(100)
+      .then(({ data, error }) => {
+        if (!error && data) {
+          const map = {}
+          for (const row of data) {
+            if (!map[row.ticker]) {
+              map[row.ticker] = row
+            }
+          }
+          setIndicatorSignals(map)
+        }
       })
     // Real-time: listen for new signals (dedup by ticker)
     const channel = supabase
@@ -423,7 +499,7 @@ export default function Dashboard() {
           <div>
             <h1 className="text-2xl font-bold text-white">Dashboard</h1>
             <p className="text-sm text-market-400 mt-1">
-              {signals.length} signals · {hkWatchlist.length} HK watchlist entries
+              {signals.length} signals · {hkWatchlist.length} HK watchlist · {Object.keys(indicatorSignals).length} indicators
             </p>
           </div>
           <a href="/" className="text-sm text-market-500 hover:text-market-300 transition-colors">
@@ -479,6 +555,7 @@ export default function Dashboard() {
                   style={BUCKET_COLORS.alpha}
                   onChart={openChart}
                   stockNames={stockNames}
+                  indicators={indicatorSignals}
                 />
               ))
             )}
@@ -490,6 +567,7 @@ export default function Dashboard() {
                 style={BUCKET_COLORS.convexity}
                 onChart={openChart}
                 stockNames={stockNames}
+                indicators={indicatorSignals}
               />
             )}
           </div>
@@ -516,7 +594,7 @@ export default function Dashboard() {
                   </h3>
                   <div className="space-y-2">
                     {hkLong.map((r, i) => (
-                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} />
+                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} ind={indicatorSignals[r.symbol]} />
                     ))}
                   </div>
                 </div>
@@ -527,7 +605,7 @@ export default function Dashboard() {
                   </h3>
                   <div className="space-y-2">
                     {hkShort.map((r, i) => (
-                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} />
+                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} ind={indicatorSignals[r.symbol]} />
                     ))}
                   </div>
                 </div>
