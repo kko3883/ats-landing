@@ -38,10 +38,18 @@ const NYSE_TICKERS = new Set([
   'TWLO', 'TOST', 'GTLB', 'DDOG', 'MDB', 'CFLT', 'NET',
 ])
 
+// Some HK stocks don't resolve with .HK suffix — use HKEX: prefix instead
+const HKEX_FALLBACK = new Set(['1928'])
+
 function toTradingViewSymbol(symbol) {
-  // TradingView accepts .HK suffix natively — more reliable than HKEX: prefix
+  // TradingView accepts .HK suffix natively for most HK stocks
   // e.g. "2382.HK", "9626.HK", "1810.HK" all resolve correctly
+  // Some (like 1928.HK) need HKEX: prefix
   if (symbol.endsWith('.HK')) {
+    const code = symbol.replace(/\.HK$/, '')
+    if (HKEX_FALLBACK.has(code)) {
+      return `HKEX:${code}`
+    }
     return symbol
   }
   // US tickers → prefix with exchange for reliable resolution
