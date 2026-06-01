@@ -257,7 +257,7 @@ function IndicatorPanel({ ind }) {
           {sgn(compScore)}{compScore}
         </span>
       </div>
-      {/* Raw values in a tooltip row */}
+      {/* Raw values */}
       <div className="text-[9px] text-market-600 text-center mt-0.5">
         {rows.map(({ key, type, label }) => {
           const v = ind[key]
@@ -265,6 +265,14 @@ function IndicatorPanel({ ind }) {
           return <span key={key} className="mr-2">{label}: {typeof v === 'number' ? (Math.abs(v) < 100 ? v.toFixed(2) : v.toFixed(0)) : v}</span>
         })}
       </div>
+      {/* Entry/Stop/Target */}
+      {ind.atr_value != null && (
+        <div className="text-[10px] text-market-400 text-center mt-1 pt-1 border-t border-market-800/50">
+          ATR: <span className="text-market-300">${ind.atr_value.toFixed(2)}</span>
+          {' · '}Stop: <span className="text-red-400">${ind.stop_loss?.toFixed(2) ?? '—'}</span>
+          {' · '}Target: <span className="text-emerald-400">${ind.take_profit?.toFixed(2) ?? '—'}</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -284,13 +292,65 @@ function indicatorKey(ticker) {
   return `${ticker}.US`
 }
 
-function SignalCard({ signal, onChart, stockNames, ind }) {
+// ── Alignment detection ───────────────────────────────────────────────
+// Checks if screener direction agrees with indicator composite
+
+function getAlignment(screenerDirection, indicatorSignal) {
+  // screenerDirection: 'LONG' or 'SHORT' (or 'long'/'short')
+  // indicatorSignal: 'strong_buy','buy','hold','sell','strong_sell'
+  const isLong = screenerDirection?.toLowerCase() === 'long'
+  const isBullish = ['strong_buy', 'buy'].includes(indicatorSignal)
+  const isBearish = ['strong_sell', 'sell'].includes(indicatorSignal)
+
+  if (isLong && isBullish) return 'aligned'
+  if (!isLong && isBearish) return 'aligned'
+  if (isLong && isBearish) return 'conflict'
+  if (!isLong && isBullish) return 'conflict'
+  return 'neutral'
+}
+
+const ALIGN_CFG = {
+  aligned:  { label: '✓ Align', bg: 'bg-emerald-800/40', text: 'text-emerald-300', border: 'border-emerald-500/40' },
+  neutral:  { label: '~ Wait',  bg: 'bg-yellow-800/30',  text: 'text-yellow-300',  border: 'border-yellow-500/30' },
+  conflict: { label: '✗ Conflict', bg: 'bg-red-800/40',   text: 'text-red-300',    border: 'border-red-500/40' },
+}
+
+function AlignmentBadge({ direction, indicatorSignal }) {
+  const state = getAlignment(direction, indicatorSignal)
+  const cfg = ALIGN_CFG[state]
+  if (!cfg) return null
+  return (
+    <span className={`text-[9px] font-mono px-1 py-0.5 rounded ${cfg.bg} ${cfg.text}`}>
+      {cfg.label}
+    </span>
+  )
+}
+
+// ── Regime badge ──────────────────────────────────────────────────────
+
+const REGIME_CFG = {
+  risk_on: { label: 'Risk-On ▲',  color: 'text-emerald-300', bg: 'bg-emerald-900/40' },
+  choppy:  { label: 'Choppy ~',   color: 'text-yellow-300',  bg: 'bg-yellow-900/30' },
+  risk_off:{ label: 'Risk-Off ▼', color: 'text-red-300',     bg: 'bg-red-900/40' },
+}
+
+function regimeBadge(r) {
+  const cfg = REGIME_CFG[r.regime_name] || REGIME_CFG.choppy
+  return (
+    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${cfg.bg} ${cfg.color}`}>
+      {cfg.label} VIX {r.vix_level?.toFixed(1)}
+    </span>
+  )
+}
+
+function SignalCard({ signal, onChart, stockNames, ind, held }) {
   const bucket = signal.bucket || 'alpha'
   const style = BUCKET_COLORS[bucket] || BUCKET_COLORS.alpha
   const meta = signal.signal_json || {}
   const ticker = signal.ticker
   const name = stockNames?.[ticker] || stockNames?.[`${ticker}.US`] || ''
   const vixLabel = VIX_ZONE_LABELS[signal.vix_zone]?.label || signal.vix_zone || '—'
+  const tickerHeld = held?.has(ticker) || held?.has(`${ticker}.US`)
 
   return (
     <div
@@ -301,9 +361,11 @@ function SignalCard({ signal, onChart, stockNames, ind }) {
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="font-bold text-white text-sm truncate">{ticker}</span>
+          {tickerHeld && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-blue-800/40 text-blue-300 shrink-0">Held</span>}
           {name && <span className="text-[10px] text-market-500 truncate hidden sm:block">{name}</span>}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          <AlignmentBadge direction={direction} indicatorSignal={ind?.composite_signal} />
           <CompositeBadge signal={ind?.composite_signal} />
           <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${signal.direction === 'LONG' ? 'bg-emerald-800/50 text-emerald-200' : 'bg-red-800/50 text-red-200'}`}>
             {signal.direction}
@@ -345,9 +407,10 @@ function SignalCard({ signal, onChart, stockNames, ind }) {
   )
 }
 
-function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_group, onChart, stockNames, onRsInfo, ind }) {
+function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_group, onChart, stockNames, onRsInfo, ind, held }) {
   const isLong = candidate_type === 'long'
   const name = stockNames?.[symbol] || ''
+  const tickerHeld = held?.has(symbol) || held?.has(symbol.replace('.HK', ''))
   return (
     <div
       className={`${isLong ? 'bg-emerald-900/20 border-emerald-700/40 hover:bg-emerald-900/40' : 'bg-red-900/20 border-red-700/40 hover:bg-red-900/40'} border rounded-lg p-3 cursor-pointer transition-colors group`}
@@ -357,9 +420,11 @@ function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_gr
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="font-bold text-white text-sm truncate">{symbol}</span>
+          {tickerHeld && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-blue-800/40 text-blue-300 shrink-0">Held</span>}
           {name && <span className="text-[10px] text-market-500 truncate hidden sm:block">{name}</span>}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          <AlignmentBadge direction={candidate_type} indicatorSignal={ind?.composite_signal} />
           <CompositeBadge signal={ind?.composite_signal} />
           <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${isLong ? 'bg-emerald-800/50 text-emerald-200' : 'bg-red-800/50 text-red-200'}`}>
             {isLong ? 'LONG' : 'SHORT'}
@@ -410,13 +475,13 @@ function HkCard({ symbol, candidate_type, rs_zscore, beta_vix, beta_dxy, beta_gr
   )
 }
 
-function BucketSection({ title, signals, style, onChart, stockNames, indicators }) {
+function BucketSection({ title, signals, style, onChart, stockNames, indicators, held }) {
   if (!signals || signals.length === 0) return null
   return (
     <div className="mb-6">
       <h3 className={`text-sm font-semibold uppercase tracking-wider mb-3 ${style.text}`}>{title} ({signals.length})</h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {signals.map(s => <SignalCard key={s.id} signal={s} onChart={onChart} stockNames={stockNames} ind={indicators?.[indicatorKey(s.ticker)]} />)}
+        {signals.map(s => <SignalCard key={s.id} signal={s} onChart={onChart} stockNames={stockNames} ind={indicators?.[indicatorKey(s.ticker)]} held={held} />)}
       </div>
     </div>
   )
@@ -434,6 +499,8 @@ export default function Dashboard() {
   const [stockNames, setStockNames] = useState({}) // {symbol: name}
   const [rsExplainer, setRsExplainer] = useState(null) // show RS tooltip
   const [indicatorSignals, setIndicatorSignals] = useState({}) // {ticker: indicator_row}
+  const [regime, setRegime] = useState(null) // current market regime
+  const [positions, setPositions] = useState([]) // held tickers
 
   // Load stock names map
   useEffect(() => {
@@ -511,6 +578,24 @@ export default function Dashboard() {
           setIndicatorSignals(map)
         }
       })
+
+    // Fetch latest regime
+    supabase
+      .from('regime')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (data && data.length > 0) setRegime(data[0])
+      })
+
+    // Fetch positions (held stocks)
+    supabase
+      .from('portfolio')
+      .select('ticker')
+      .then(({ data }) => {
+        if (data) setPositions(data.map(r => r.ticker))
+      })
     // Real-time: listen for new signals (dedup by ticker)
     const channel = supabase
       .channel('signals')
@@ -563,6 +648,9 @@ export default function Dashboard() {
   const hkLong = hkWatchlist.filter(r => r.candidate_type === 'long').sort((a, b) => b.rs_zscore - a.rs_zscore)
   const hkShort = hkWatchlist.filter(r => r.candidate_type === 'short').sort((a, b) => a.rs_zscore - b.rs_zscore)
 
+  // Held positions set
+  const heldSet = new Set(positions)
+
   // ── Chart modal ──
   const openChart = useCallback((symbol) => setChartSymbol(symbol), [])
   const closeChart = useCallback(() => setChartSymbol(null), [])
@@ -577,6 +665,7 @@ export default function Dashboard() {
             <h1 className="text-2xl font-bold text-white">Dashboard</h1>
             <p className="text-sm text-market-400 mt-1">
               {signals.length} signals · {hkWatchlist.length} HK watchlist · {Object.keys(indicatorSignals).length} indicators
+              {regime && <span className="ml-2">{regimeBadge(regime)}</span>}
             </p>
           </div>
           <a href="/" className="text-sm text-market-500 hover:text-market-300 transition-colors">
@@ -633,6 +722,7 @@ export default function Dashboard() {
                   onChart={openChart}
                   stockNames={stockNames}
                   indicators={indicatorSignals}
+                  held={heldSet}
                 />
               ))
             )}
@@ -645,6 +735,7 @@ export default function Dashboard() {
                 onChart={openChart}
                 stockNames={stockNames}
                 indicators={indicatorSignals}
+                held={heldSet}
               />
             )}
           </div>
@@ -671,7 +762,7 @@ export default function Dashboard() {
                   </h3>
                   <div className="space-y-2">
                     {hkLong.map((r, i) => (
-                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} ind={indicatorSignals[r.symbol]} />
+                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} ind={indicatorSignals[r.symbol]} held={heldSet} />
                     ))}
                   </div>
                 </div>
@@ -682,7 +773,7 @@ export default function Dashboard() {
                   </h3>
                   <div className="space-y-2">
                     {hkShort.map((r, i) => (
-                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} ind={indicatorSignals[r.symbol]} />
+                      <HkCard key={`${r.id}-${i}`} {...r} onChart={openChart} stockNames={stockNames} onRsInfo={() => setRsExplainer('rs')} ind={indicatorSignals[r.symbol]} held={heldSet} />
                     ))}
                   </div>
                 </div>
