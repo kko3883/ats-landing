@@ -581,6 +581,7 @@ export default function Dashboard() {
   const [connected, setConnected] = useState(!!supabase)
   const [signals, setSignals] = useState([])
   const [hkWatchlist, setHkWatchlist] = useState([])
+  const [usWatchlist, setUsWatchlist] = useState([])
   const [loading, setLoading] = useState(true)
   const [chartSymbol, setChartSymbol] = useState(null)
   const [stockNames, setStockNames] = useState({})
@@ -614,7 +615,7 @@ export default function Dashboard() {
     setConnected(true)
 
     let loaded = 0
-    const checkDone = () => { loaded++; if (loaded >= 5) setLoading(false) }
+    const checkDone = () => { loaded++; if (loaded >= 6) setLoading(false) }
 
     supabase.from('signals').select('*').order('created_at', { ascending: false }).limit(50)
       .then(({ data, error }) => {
@@ -662,6 +663,15 @@ export default function Dashboard() {
     supabase.from('portfolio').select('ticker,position_qty,market_value,bucket')
       .then(({ data }) => {
         if (data) setPositions(data)
+        checkDone()
+      })
+
+    supabase.from('watchlist_us').select('*').order('id', { ascending: false }).limit(50)
+      .then(({ data, error }) => {
+        if (!error && data) {
+          const latestBatch = data[0]?.generated_at
+          setUsWatchlist(latestBatch ? data.filter(r => r.generated_at === latestBatch) : data)
+        }
         checkDone()
       })
 
@@ -722,7 +732,6 @@ export default function Dashboard() {
   // HK watchlist — long candidates → LONG, short → SHORT
   for (const r of hkWatchlist) {
     const dir = r.candidate_type === 'long' ? 'LONG' : 'SHORT'
-    // If already exists from signals, enrich (don't override direction)
     if (dirSignalMap[r.symbol]) {
       dirSignalMap[r.symbol].rs_zscore = r.rs_zscore
       dirSignalMap[r.symbol].beta_vix = r.beta_vix
@@ -742,6 +751,16 @@ export default function Dashboard() {
         beta_dxy: r.beta_dxy,
         beta_group: r.beta_group,
       }
+    }
+  }
+
+  // US watchlist — enrich existing signal items with screener metrics
+  for (const r of usWatchlist) {
+    if (dirSignalMap[r.symbol]) {
+      dirSignalMap[r.symbol].rs_zscore = r.rs_zscore
+      dirSignalMap[r.symbol].beta_vix = r.beta_vix
+      dirSignalMap[r.symbol].beta_dxy = r.beta_dxy
+      dirSignalMap[r.symbol].beta_group = r.beta_group
     }
   }
 
