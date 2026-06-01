@@ -290,6 +290,7 @@ function SignalCard({ signal, onChart, stockNames, ind }) {
   const meta = signal.signal_json || {}
   const ticker = signal.ticker
   const name = stockNames?.[ticker] || stockNames?.[`${ticker}.US`] || ''
+  const vixLabel = VIX_ZONE_LABELS[signal.vix_zone]?.label || signal.vix_zone || '—'
 
   return (
     <div
@@ -313,11 +314,21 @@ function SignalCard({ signal, onChart, stockNames, ind }) {
       {/* Two-column layout: screener | technical indicators */}
       <div className="flex gap-2">
         {/* Left: screener data */}
-        <div className="w-24 shrink-0 space-y-0.5 text-[10px]">
+        <div className="w-24 shrink-0 space-y-1 text-[10px]">
+          <div className="flex justify-between text-market-400">
+            <span>VIX Zone</span>
+            <span className="text-market-300">{vixLabel}</span>
+          </div>
           <div className="flex justify-between text-market-400">
             <span>Bucket</span>
             <span className={style.text}>{bucket}</span>
           </div>
+          {meta.group && (
+            <div className="flex justify-between text-market-400">
+              <span>Group</span>
+              <span className="text-market-300">{meta.group.replace(/_/g, ' ')}</span>
+            </div>
+          )}
           {meta.price && (
             <div className="flex justify-between text-market-400">
               <span>Price</span>
