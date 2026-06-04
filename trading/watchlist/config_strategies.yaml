@@ -1,0 +1,192 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# STRATEGY CONFIGURATION
+# ──────────────────────────────────────────────────────────────────────────────
+# This file defines ALL strategies. The signal engine reads this and evaluates
+# each strategy against the watchlist. You edit THIS file to add, modify, or
+# remove strategies — no Python changes needed.
+#
+# HOW TO ADD A STRATEGY:
+#   1. Copy one of the examples below
+#   2. Change the name, conditions, and parameters
+#   3. Run: python -m watchlist.signal_engine
+#   Done. No code changes.
+#
+# HOW CONDITIONS WORK:
+#   Each condition calls an indicator function. Available indicators:
+#
+#   rsi_lt(period, threshold)       → RSI below threshold (oversold entry)
+#   rsi_gt(period, threshold)       → RSI above threshold (overbought exit)
+#   price_above_sma(period)         → Price > SMA
+#   price_below_sma(period)         → Price < SMA
+#   near_sma(period, pct)           → Price within N% of SMA
+#   sma_crossover(fast, slow)       → Golden cross
+#   sma_crossunder(fast, slow)      → Death cross
+#   breakout(lookback, vol_mult)    → New high + volume surge
+#   pullback(rsi_period, rsi_thresh, sma_period, sma_proximity)
+#   bb_squeeze(...)                 → Bollinger squeeze setup
+#
+#   Conditions are AND'd — ALL must pass for a signal to fire.
+#
+# INDICATORS YOU CAN ADD (open strategies/indicators.py, ~10 lines):
+#   macd_crossover, stoch_rsi, adx_trending, volume_ratio, vwap, ichimoku, etc.
+# ──────────────────────────────────────────────────────────────────────────────
+
+strategies:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # BUCKET 2: Alpha Gen — Directional & Mean Reversion
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # ── 1. Pullback Entry ─────────────────────────────────────────────────────
+  # Active in: Choppy regime
+  # Targets:   neutral + moderate_defensive groups (stable compounders)
+  # Logic:     Buy weakness near support. RSI oversold + near 50-day SMA.
+  mag7_pullback:
+    enabled: true
+    name: "Mag 7 Quality Pullback"
+    bucket: "alpha_gen"
+    markets: ["us"]
+    watchlist_groups: ["neutral", "moderate_defensive"]
+
+    entry:
+      conditions:
+        - indicator: pullback
+          rsi_period: 14
+          rsi_threshold: 35
+          sma_period: 50
+          sma_proximity: 0.03
+
+    exit:
+      # Take profit: RSI crosses above 55 (momentum exhausted)
+      conditions:
+        - indicator: rsi_gt
+          period: 14
+          threshold: 55
+      stop_loss_pct: 0.05
+      # Optional trailing stop:
+      # trailing_stop: atr_2x
+
+    sizing:
+      stop_loss_pct: 0.05
+      take_profit_pct: 0.08
+      max_position_pct: 0.10
+      max_group_exposure: 0.30
+
+
+  # ── 2. Trend Breakout ─────────────────────────────────────────────────────
+  # Active in: Trending regime
+  # Targets:   high_beta_growth + moderate_growth groups
+  # Logic:     New 20-day high + volume surge (Donchian/Turtle entry)
+  donchian_breakout:
+    enabled: true
+    name: "Donchian Trend Breakout"
+    bucket: "alpha_gen"
+    markets: ["us"]
+    watchlist_groups: ["high_beta_growth", "moderate_growth"]
+
+    entry:
+      conditions:
+        - indicator: breakout
+          lookback: 20
+          volume_multiple: 1.5
+
+    exit:
+      conditions:
+        - indicator: price_below_sma
+          period: 50
+      # Or use a 10-day low stop
+      # breakout: {lookback: 10, direction: below}
+      stop_loss_pct: 0.07
+
+    sizing:
+      stop_loss_pct: 0.07
+      atr_multiple: 1.5
+      max_position_pct: 0.15
+
+
+  # ── 3. Golden Cross Momentum ──────────────────────────────────────────────
+  # Active in: Trending regime
+  # Targets:   All groups (pick the strongest RS from each)
+  # Logic:     20/50 SMA crossover = trend change confirmation
+  golden_cross_momentum:
+    enabled: true
+    name: "Golden Cross Momentum"
+    bucket: "alpha_gen"
+    markets: ["us"]
+    watchlist_groups: ["high_beta_growth", "moderate_growth", "neutral"]
+
+    entry:
+      conditions:
+        - indicator: sma_crossover
+          fast: 20
+          slow: 50
+        - indicator: price_above_sma
+          period: 200
+
+    exit:
+      conditions:
+        - indicator: sma_crossunder
+          fast: 20
+          slow: 50
+      stop_loss_pct: 0.08
+
+    sizing:
+      stop_loss_pct: 0.08
+      max_position_pct: 0.12
+
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # BUCKET 3: Convexity — Low Probability, High Reward
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # ── 4. Volatility Expansion ───────────────────────────────────────────────
+  # Active in: Trending regime (anticipating the expansion)
+  # Targets:   moderate_growth + neutral (options-friendly names)
+  # Logic:     BB squeeze near multi-month low + volume expanding
+  bb_squeeze_expansion:
+    enabled: true
+    name: "Bollinger Squeeze Expansion"
+    bucket: "convexity"
+    markets: ["us"]
+    watchlist_groups: ["moderate_growth", "neutral"]
+
+    entry:
+      conditions:
+        - indicator: bb_squeeze
+          bb_period: 20
+          lookback: 90
+          volume_multiple: 1.5
+
+    exit:
+      conditions: []
+      stop_loss_pct: 0.05
+      take_profit_pct: 0.12
+
+    sizing:
+      stop_loss_pct: 0.05
+      take_profit_pct: 0.12
+      max_position_pct: 0.08
+
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # BUCKET 1: Base Yield — Structural (no watchlist needed)
+  # ═══════════════════════════════════════════════════════════════════════════
+  # These don't need stock-level entries because they're structural:
+  #   - SPY overnight gap (everyday, mechanical)
+  #   - FX carry (Thursday → Monday)
+  #   - QQQ covered calls (monthly, when above 50-day)
+  #
+  # They can be triggered by a simple cron, not the watchlist.
+  # ═══════════════════════════════════════════════════════════════════════════
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GLOBAL SETTINGS (shared across all strategies)
+# ═════════════════════════════════════════════════════════════════════════════
+
+global:
+  max_total_positions: 8
+  max_daily_loss_pct: 0.02
+  max_concurrent_per_strategy: 3
+  correlation_guard: true  # avoid over-concentration in same VIX beta group
+  weekend_flat: false      # close all positions by Friday 20:00 UTC

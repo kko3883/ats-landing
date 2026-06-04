@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATS Watchlist Dashboard</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+          background:#0d1117; color:#c9d1d9; padding:24px; }
+  h1 { font-size:24px; margin-bottom:4px; color:#f0f6fc; }
+  .subtitle { color:#8b949e; margin-bottom:24px; font-size:13px; }
+  .stats { display:flex; gap:12px; margin-bottom:24px; flex-wrap:wrap; }
+  .stat { background:#161b22; border:1px solid #30363d; border-radius:8px;
+           padding:16px 20px; min-width:120px; }
+  .stat .num { font-size:28px; font-weight:600; color:#58a6ff; }
+  .stat .num.green { color:#3fb950; }
+  .stat .num.red { color:#f85149; }
+  .stat .num.yellow { color:#d29922; }
+  .stat .label { font-size:11px; color:#8b949e; text-transform:uppercase; }
+
+  h2 { font-size:18px; margin:24px 0 12px; color:#f0f6fc;
+        padding-bottom:8px; border-bottom:1px solid #30363d; }
+
+  .group-card { background:#161b22; border:1px solid #30363d; border-radius:8px;
+                 margin-bottom:12px; overflow:hidden; }
+  .group-header { padding:12px 16px; display:flex; justify-content:space-between;
+                   align-items:center; cursor:pointer; }
+  .group-header:hover { background:#1c2128; }
+  .group-name { font-weight:600; font-size:14px; }
+  .group-meta { font-size:12px; color:#8b949e; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; padding:8px 16px; color:#8b949e; font-weight:500;
+        border-bottom:1px solid #21262d; font-size:11px; text-transform:uppercase; }
+  td { padding:8px 16px; border-bottom:1px solid #21262d; }
+  tr:last-child td { border-bottom:none; }
+  .cell-score { font-family:'SF Mono','Fira Code',monospace; font-size:12px; }
+  .tag { display:inline-block; padding:1px 6px; border-radius:4px; font-size:11px;
+          font-weight:500; }
+  .tag.long { background:#0d5320; color:#7ee787; }
+  .tag.short { background:#7e0f19; color:#ffa198; }
+  .tag.entry { background:#0a2e6e; color:#79c0ff; }
+  .tag.exit { background:#4d0d15; color:#ff7b72; }
+  .status { margin-top:24px; padding:12px; border-radius:6px; font-size:12px; }
+  .status.warn { background:#3d2e00; border:1px solid #5a4200; color:#d29922; }
+  .status.info { background:#0a2e6e; border:1px solid #1f5a99; color:#79c0ff; }
+  details summary { list-style:none; }
+  details summary::-webkit-details-marker { display:none; }
+</style>
+</head>
+<body>
+<h1>ATS Watchlist Dashboard</h1>
+<div class="subtitle">Generated: 2026-05-31T12:44:54</div>
+
+<div class="stats">
+  <div class="stat">
+    <div class="num">263</div>
+    <div class="label">Passed Liquidity</div>
+  </div>
+  <div class="stat">
+    <div class="num yellow">5</div>
+    <div class="label">Beta Groups</div>
+  </div>
+  <div class="stat">
+    <div class="num green">6</div>
+    <div class="label">Entry Signals</div>
+  </div>
+  <div class="stat">
+    <div class="num red">0</div>
+    <div class="label">Exit Signals</div>
+  </div>
+</div>
+<h2>Entry Signals</h2><div class="group-card">
+              <div class="group-header">
+                <div><span class="tag entry">ENTRY</span> <strong>DELL</strong>
+                <span class="tag long">LONG</span>
+                <span style="color:#8b949e;font-size:12px;margin-left:8px">donchian_breakout</span></div>
+                <div style="font-size:12px;color:#8b949e">$420.91  SL: $391.45</div>
+              </div>
+            </div><div class="group-card">
+              <div class="group-header">
+                <div><span class="tag entry">ENTRY</span> <strong>SMCI</strong>
+                <span class="tag long">LONG</span>
+                <span style="color:#8b949e;font-size:12px;margin-left:8px">donchian_breakout</span></div>
+                <div style="font-size:12px;color:#8b949e">$46.09  SL: $42.86</div>
+              </div>
+            </div><div class="group-card">
+              <div class="group-header">
+                <div><span class="tag entry">ENTRY</span> <strong>CRWD</strong>
+                <span class="tag long">LONG</span>
+                <span style="color:#8b949e;font-size:12px;margin-left:8px">donchian_breakout</span></div>
+                <div style="font-size:12px;color:#8b949e">$731.00  SL: $679.83</div>
+              </div>
+            </div><div class="group-card">
+              <div class="group-header">
+                <div><span class="tag entry">ENTRY</span> <strong>FSLR</strong>
+                <span class="tag long">LONG</span>
+                <span style="color:#8b949e;font-size:12px;margin-left:8px">donchian_breakout</span></div>
+                <div style="font-size:12px;color:#8b949e">$306.79  SL: $285.31</div>
+              </div>
+            </div><div class="group-card">
+              <div class="group-header">
+                <div><span class="tag entry">ENTRY</span> <strong>ESTC</strong>
+                <span class="tag long">LONG</span>
+                <span style="color:#8b949e;font-size:12px;margin-left:8px">donchian_breakout</span></div>
+                <div style="font-size:12px;color:#8b949e">$64.70  SL: $60.17</div>
+              </div>
+            </div><div class="group-card">
+              <div class="group-header">
+                <div><span class="tag entry">ENTRY</span> <strong>CSCO</strong>
+                <span class="tag long">LONG</span>
+                <span style="color:#8b949e;font-size:12px;margin-left:8px">donchian_breakout</span></div>
+                <div style="font-size:12px;color:#8b949e">$120.42  SL: $111.99</div>
+              </div>
+            </div><h2>Watchlist Groups</h2><details open>
+<summary class="group-card">
+  <div class="group-header">
+    <div class="group-name" style="border-left:3px solid #7e0f19;padding-left:10px">
+      High Beta Growth</div>
+    <div class="group-meta">52 stocks · β_vix = -0.177 · β_dxy = -0.672</div>
+  </div>
+</summary>
+<div style="padding:0 16px 12px">
+  <table>
+    <tr><th>Symbol</th><th>β_vix</th><th>β_dxy</th><th>RS Z-Score</th><th>Signal</th></tr><tr>
+              <td><strong>ENPH</strong></td>
+              <td class="cell-score">-0.215</td>
+              <td class="cell-score">+0.583</td>
+              <td class="cell-score" style="color:#3fb950">+3.261</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>DELL</strong></td>
+              <td class="cell-score">-0.151</td>
+              <td class="cell-score">-0.792</td>
+              <td class="cell-score" style="color:#3fb950">+3.044</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>MU</strong></td>
+              <td class="cell-score">-0.219</td>
+              <td class="cell-score">-0.562</td>
+              <td class="cell-score" style="color:#3fb950">+2.546</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>SEDG</strong></td>
+              <td class="cell-score">-0.178</td>
+              <td class="cell-score">+1.646</td>
+              <td class="cell-score" style="color:#3fb950">+2.196</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>SMCI</strong></td>
+              <td class="cell-score">-0.285</td>
+              <td class="cell-score">-2.474</td>
+              <td class="cell-score" style="color:#3fb950">+1.835</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>RBLX</strong></td>
+              <td class="cell-score">-0.178</td>
+              <td class="cell-score">-0.142</td>
+              <td class="cell-score" style="color:#f85149">-1.179</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>KKR</strong></td>
+              <td class="cell-score">-0.186</td>
+              <td class="cell-score">+0.607</td>
+              <td class="cell-score" style="color:#f85149">-0.932</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>ANET</strong></td>
+              <td class="cell-score">-0.176</td>
+              <td class="cell-score">-1.692</td>
+              <td class="cell-score" style="color:#f85149">-0.924</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>BX</strong></td>
+              <td class="cell-score">-0.177</td>
+              <td class="cell-score">+0.251</td>
+              <td class="cell-score" style="color:#f85149">-0.863</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>SNAP</strong></td>
+              <td class="cell-score">-0.184</td>
+              <td class="cell-score">-1.326</td>
+              <td class="cell-score" style="color:#f85149">-0.861</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr></table></div></details><details open>
+<summary class="group-card">
+  <div class="group-header">
+    <div class="group-name" style="border-left:3px solid #3d2e00;padding-left:10px">
+      Moderate Growth</div>
+    <div class="group-meta">52 stocks · β_vix = -0.110 · β_dxy = -0.227</div>
+  </div>
+</summary>
+<div style="padding:0 16px 12px">
+  <table>
+    <tr><th>Symbol</th><th>β_vix</th><th>β_dxy</th><th>RS Z-Score</th><th>Signal</th></tr><tr>
+              <td><strong>DDOG</strong></td>
+              <td class="cell-score">-0.127</td>
+              <td class="cell-score">+0.497</td>
+              <td class="cell-score" style="color:#3fb950">+4.262</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>CRWD</strong></td>
+              <td class="cell-score">-0.088</td>
+              <td class="cell-score">+0.357</td>
+              <td class="cell-score" style="color:#3fb950">+3.021</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>FSLR</strong></td>
+              <td class="cell-score">-0.120</td>
+              <td class="cell-score">-0.247</td>
+              <td class="cell-score" style="color:#3fb950">+2.375</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>ESTC</strong></td>
+              <td class="cell-score">-0.129</td>
+              <td class="cell-score">+0.305</td>
+              <td class="cell-score" style="color:#3fb950">+1.699</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>CSCO</strong></td>
+              <td class="cell-score">-0.105</td>
+              <td class="cell-score">+0.152</td>
+              <td class="cell-score" style="color:#3fb950">+1.283</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>IR</strong></td>
+              <td class="cell-score">-0.131</td>
+              <td class="cell-score">-1.162</td>
+              <td class="cell-score" style="color:#f85149">-0.964</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>FISV</strong></td>
+              <td class="cell-score">-0.105</td>
+              <td class="cell-score">+0.171</td>
+              <td class="cell-score" style="color:#f85149">-0.935</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>FIS</strong></td>
+              <td class="cell-score">-0.089</td>
+              <td class="cell-score">+1.213</td>
+              <td class="cell-score" style="color:#f85149">-0.822</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>MTD</strong></td>
+              <td class="cell-score">-0.131</td>
+              <td class="cell-score">-0.137</td>
+              <td class="cell-score" style="color:#f85149">-0.817</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>ETN</strong></td>
+              <td class="cell-score">-0.092</td>
+              <td class="cell-score">-1.219</td>
+              <td class="cell-score" style="color:#f85149">-0.801</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr></table></div></details><details open>
+<summary class="group-card">
+  <div class="group-header">
+    <div class="group-name" style="border-left:3px solid #0a2e6e;padding-left:10px">
+      Neutral</div>
+    <div class="group-meta">52 stocks · β_vix = -0.076 · β_dxy = -0.137</div>
+  </div>
+</summary>
+<div style="padding:0 16px 12px">
+  <table>
+    <tr><th>Symbol</th><th>β_vix</th><th>β_dxy</th><th>RS Z-Score</th><th>Signal</th></tr><tr>
+              <td><strong>FTNT</strong></td>
+              <td class="cell-score">-0.072</td>
+              <td class="cell-score">-0.023</td>
+              <td class="cell-score" style="color:#3fb950">+3.885</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>PANW</strong></td>
+              <td class="cell-score">-0.066</td>
+              <td class="cell-score">-0.203</td>
+              <td class="cell-score" style="color:#3fb950">+3.464</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>HPQ</strong></td>
+              <td class="cell-score">-0.068</td>
+              <td class="cell-score">+0.252</td>
+              <td class="cell-score" style="color:#3fb950">+1.700</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>DLTR</strong></td>
+              <td class="cell-score">-0.078</td>
+              <td class="cell-score">-0.804</td>
+              <td class="cell-score" style="color:#3fb950">+1.075</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>LLY</strong></td>
+              <td class="cell-score">-0.061</td>
+              <td class="cell-score">-0.526</td>
+              <td class="cell-score" style="color:#3fb950">+0.981</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>ZTS</strong></td>
+              <td class="cell-score">-0.081</td>
+              <td class="cell-score">-0.590</td>
+              <td class="cell-score" style="color:#f85149">-2.287</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>CE</strong></td>
+              <td class="cell-score">-0.079</td>
+              <td class="cell-score">+1.999</td>
+              <td class="cell-score" style="color:#f85149">-1.591</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>PODD</strong></td>
+              <td class="cell-score">-0.088</td>
+              <td class="cell-score">+0.046</td>
+              <td class="cell-score" style="color:#f85149">-1.219</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>REGN</strong></td>
+              <td class="cell-score">-0.067</td>
+              <td class="cell-score">-0.794</td>
+              <td class="cell-score" style="color:#f85149">-1.034</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>LOW</strong></td>
+              <td class="cell-score">-0.082</td>
+              <td class="cell-score">-0.870</td>
+              <td class="cell-score" style="color:#f85149">-0.861</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr></table></div></details><details open>
+<summary class="group-card">
+  <div class="group-header">
+    <div class="group-name" style="border-left:3px solid #1c4d2e;padding-left:10px">
+      Moderate Defensive</div>
+    <div class="group-meta">52 stocks · β_vix = -0.041 · β_dxy = -0.089</div>
+  </div>
+</summary>
+<div style="padding:0 16px 12px">
+  <table>
+    <tr><th>Symbol</th><th>β_vix</th><th>β_dxy</th><th>RS Z-Score</th><th>Signal</th></tr><tr>
+              <td><strong>NOW</strong></td>
+              <td class="cell-score">-0.049</td>
+              <td class="cell-score">+0.180</td>
+              <td class="cell-score" style="color:#3fb950">+3.727</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>ILMN</strong></td>
+              <td class="cell-score">-0.044</td>
+              <td class="cell-score">-1.108</td>
+              <td class="cell-score" style="color:#3fb950">+2.570</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>CHKP</strong></td>
+              <td class="cell-score">-0.022</td>
+              <td class="cell-score">+1.498</td>
+              <td class="cell-score" style="color:#3fb950">+1.767</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>WDAY</strong></td>
+              <td class="cell-score">-0.033</td>
+              <td class="cell-score">+0.940</td>
+              <td class="cell-score" style="color:#3fb950">+1.707</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>CROX</strong></td>
+              <td class="cell-score">-0.039</td>
+              <td class="cell-score">-1.461</td>
+              <td class="cell-score" style="color:#3fb950">+1.417</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>AZO</strong></td>
+              <td class="cell-score">-0.050</td>
+              <td class="cell-score">-0.985</td>
+              <td class="cell-score" style="color:#f85149">-2.087</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>DOW</strong></td>
+              <td class="cell-score">-0.028</td>
+              <td class="cell-score">+2.178</td>
+              <td class="cell-score" style="color:#f85149">-1.619</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>CHTR</strong></td>
+              <td class="cell-score">-0.059</td>
+              <td class="cell-score">+0.492</td>
+              <td class="cell-score" style="color:#f85149">-1.335</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>ORLY</strong></td>
+              <td class="cell-score">-0.029</td>
+              <td class="cell-score">-0.897</td>
+              <td class="cell-score" style="color:#f85149">-1.317</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>MDT</strong></td>
+              <td class="cell-score">-0.028</td>
+              <td class="cell-score">-0.291</td>
+              <td class="cell-score" style="color:#f85149">-0.963</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr></table></div></details><details open>
+<summary class="group-card">
+  <div class="group-header">
+    <div class="group-name" style="border-left:3px solid #0d5320;padding-left:10px">
+      Defensive</div>
+    <div class="group-meta">55 stocks · β_vix = +0.007 · β_dxy = -0.183</div>
+  </div>
+</summary>
+<div style="padding:0 16px 12px">
+  <table>
+    <tr><th>Symbol</th><th>β_vix</th><th>β_dxy</th><th>RS Z-Score</th><th>Signal</th></tr><tr>
+              <td><strong>DVA</strong></td>
+              <td class="cell-score">+0.054</td>
+              <td class="cell-score">-1.173</td>
+              <td class="cell-score" style="color:#3fb950">+4.786</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>SJM</strong></td>
+              <td class="cell-score">+0.017</td>
+              <td class="cell-score">-0.299</td>
+              <td class="cell-score" style="color:#3fb950">+1.680</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>D</strong></td>
+              <td class="cell-score">+0.003</td>
+              <td class="cell-score">-0.442</td>
+              <td class="cell-score" style="color:#3fb950">+1.413</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>ABBV</strong></td>
+              <td class="cell-score">-0.016</td>
+              <td class="cell-score">-0.700</td>
+              <td class="cell-score" style="color:#3fb950">+1.118</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>LMT</strong></td>
+              <td class="cell-score">-0.005</td>
+              <td class="cell-score">-0.120</td>
+              <td class="cell-score" style="color:#3fb950">+1.015</td>
+              <td><span class="tag long">LONG</span></td>
+            </tr><tr>
+              <td><strong>BSX</strong></td>
+              <td class="cell-score">+0.008</td>
+              <td class="cell-score">-0.324</td>
+              <td class="cell-score" style="color:#f85149">-2.043</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>UHS</strong></td>
+              <td class="cell-score">-0.016</td>
+              <td class="cell-score">+0.156</td>
+              <td class="cell-score" style="color:#f85149">-1.553</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>HCA</strong></td>
+              <td class="cell-score">-0.013</td>
+              <td class="cell-score">-0.293</td>
+              <td class="cell-score" style="color:#f85149">-1.504</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>WMT</strong></td>
+              <td class="cell-score">-0.012</td>
+              <td class="cell-score">+0.021</td>
+              <td class="cell-score" style="color:#f85149">-1.376</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr><tr>
+              <td><strong>STZ</strong></td>
+              <td class="cell-score">+0.001</td>
+              <td class="cell-score">-0.865</td>
+              <td class="cell-score" style="color:#f85149">-1.252</td>
+              <td><span class="tag short">SHORT</span></td>
+            </tr></table></div></details><div class="status info">
+      <strong>Data source:</strong> Yahoo Finance (yfinance) — free, covers US &amp; HK.
+      Refreshes every 24h. For real-time execution, connects through IBKR Gateway separately.
+    </div>
+    <div class="status warn">
+      <strong>Limitations:</strong> Yahoo Finance is not a production-grade data vendor.
+      It has no SLA, may throttle aggressive callers, and HK data quality is lower than US.
+      Suitable for daily watchlists. For sub-minute signals, use IBKR streaming API.
+    </div>
+</body></html>

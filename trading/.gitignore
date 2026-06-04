@@ -1,0 +1,25 @@
+# Logs
+*.log
+*.stdout.log
+*.stderr.log
+
+# Runtime state (regenerated)
+fx_state.json
+fx_alert.json
+hk_alert.json
+watchlist.json
+
+# Virtual env
+venv/
+
+# Caches
+__pycache__/
+.cache/
+
+# Backups
+*.bak
+*.bak2
+*.bak3
+*.bak4
+*.bak5
+*.bak6
