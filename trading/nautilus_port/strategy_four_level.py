@@ -94,6 +94,8 @@ class FourLevelStrategy(Strategy):
         self._latest: dict[InstrumentId, dict] = {}          # last signal per pair (for /status)
         self._state_path = os.environ.get("STATE_PATH")      # set in live deploy; unset in backtest
         self._state_interval = int(os.environ.get("STATE_INTERVAL_SECS", "30"))
+        self._snap_stop = threading.Event()
+        self._snap_thread = None
 
     # ── lifecycle ──────────────────────────────────────────────────────────
     def on_start(self):
@@ -112,14 +114,11 @@ class FourLevelStrategy(Strategy):
             self.log.info(f"Subscribed {bar_type}")
         self._notify("🟢 ATS FX strategy started (paper) — " + ", ".join(str(i) for i in self._bar_types))
         if self._state_path:
-            self.clock.set_timer(
-                "ats_state_snapshot",
-                timedelta(seconds=self._state_interval),
-                callback=self._on_state_timer,
-            )
-            self._write_state()
+            self._write_state()              # initial snapshot
+            self._start_snapshot_thread()    # refresh every _state_interval seconds
 
     def on_stop(self):
+        self._snap_stop.set()                # stop the snapshot thread
         # Cancel resting working orders, but deliberately do NOT flatten:
         # the protective GTC stops stay live at IB so a restart can't leave you naked.
         for iid in self._state:
@@ -317,8 +316,14 @@ class FourLevelStrategy(Strategy):
         threading.Thread(target=_send, daemon=True).start()
 
     # ── state snapshot (for the Telegram bot) ────────────────────────────
-    def _on_state_timer(self, event):
-        self._write_state()
+    def _start_snapshot_thread(self):
+        """Background loop: re-snapshot every _state_interval seconds. Used instead of a
+        Nautilus clock timer (set_timer raises in on_start in this version)."""
+        def _loop():
+            while not self._snap_stop.wait(self._state_interval):
+                self._write_state()
+        self._snap_thread = threading.Thread(target=_loop, daemon=True)
+        self._snap_thread.start()
 
     def _write_state(self):
         """Snapshot live state to STATE_PATH for the Telegram bot. No-op if unset; never raises."""
