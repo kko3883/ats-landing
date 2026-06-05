@@ -24,13 +24,15 @@ services:
       TWOFA_TIMEOUT_ACTION: restart
       RELOGIN_AFTER_TWOFA_TIMEOUT: "yes"
       TIME_ZONE: Asia/Hong_Kong
-      TWS_SETTINGS_PATH: /home/ibgateway/tws_settings   # explicit, so the mount below persists it
     ports:
       # Bind to NAS localhost only — never expose IB to the LAN/internet.
       - "127.0.0.1:4002:4002"        # API (paper)
       - "127.0.0.1:5900:5900"        # VNC (reach via SSH tunnel; see DEPLOY.md)
-    volumes:
-      - ibgw-settings:/home/ibgateway/tws_settings   # named volume (Docker-managed; avoids host-path/ACL/ownership issues)
+    # No settings volume: the gateway runs ephemeral and IBC rebuilds its config from the env
+    # vars above on every start. A mounted volume hits "Permission denied" because the gateway
+    # runs as uid 1000 while a fresh volume is root-owned. To add persistence later: create the
+    # volume, `docker volume inspect` its Mountpoint, chown it to 1000:1000, then re-add the
+    # mount + TWS_SETTINGS_PATH: /home/ibgateway/tws_settings.
     labels:
       - "autoheal=true"              # match your existing autoheal label if it differs
     healthcheck:
@@ -57,6 +59,3 @@ services:
       TZ: Asia/Hong_Kong
     labels:
       - "autoheal=true"
-
-volumes:
-  ibgw-settings:        # Docker-managed named volume for the gateway's IBC/TWS settings
