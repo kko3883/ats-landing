@@ -45,8 +45,11 @@ cd /volume1/docker/ats-fx
 ## 2. Create the secrets file
 
 ```
-sudo cp .env.example .env && sudo chmod 600 .env
+sudo cp .env.example .env
 ```
+
+> On the `/volume1/docker` share, `chmod 600` returns "operation not permitted" — that's the
+> Synology ACL, and it's fine: the folder already restricts reads to root. Skip it.
 
 Edit it — fill in the **second-user** credentials, the `DU…` account id, and a VNC password:
 

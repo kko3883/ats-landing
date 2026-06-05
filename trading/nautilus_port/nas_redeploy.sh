@@ -19,7 +19,7 @@ cd "$PROJECT"
 cd "$APP"
 if [ ! -f .env ]; then
   cp .env.example .env
-  chmod 600 .env
+  chmod 600 .env 2>/dev/null || true   # /volume1/docker is ACL-gated; POSIX chmod EPERMs (harmless)
   echo ">> Created $APP/.env — edit it with your IBKR Gateway creds + DU account id, then re-run."
   exit 1
 fi
