@@ -21,6 +21,10 @@ services:
       # If this username already has a session elsewhere, take it over rather than hang on
       # the "Existing session detected" dialog (which leaves the gateway unhealthy forever).
       EXISTING_SESSION_DETECTED_ACTION: primary
+      # Auto-accept the daemon's incoming API connection. Headless: no one can click the
+      # "Accept incoming connection" dialog, so the default (manual) makes the client hang
+      # with "Failed to receive server version information". accept = let it in.
+      TWS_ACCEPT_INCOMING: accept
       # Daily token-based restart (no credentials needed) — keeps it 24x7.
       AUTO_RESTART_TIME: "11:59 PM"
       # 2FA handling: on a timed-out 2FA, restart and re-prompt rather than die.
