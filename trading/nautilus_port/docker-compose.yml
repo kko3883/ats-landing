@@ -62,7 +62,10 @@ services:
       - .env                         # provides IB_ACCOUNT_ID
     environment:
       IBG_HOST: ib-gateway           # reach the gateway by its compose service name
-      IBG_PORT: "4002"               # paper
+      # 4004 = gnzsnz socat port for paper; it relays into the gateway from 127.0.0.1 (TRUSTED).
+      # Do NOT use 4002 (the gateway's direct listener) — a container connects as an untrusted
+      # external IP and the API handshake fails ("Failed to receive server version information").
+      IBG_PORT: "4004"
       TZ: Asia/Hong_Kong
     labels:
       - "autoheal=true"
