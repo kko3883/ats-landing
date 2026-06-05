@@ -1,0 +1,6 @@
+# Interactive Telegram bot sidecar — pure stdlib, no dependencies.
+FROM python:3.12-slim
+WORKDIR /app
+COPY telegram_bot.py ./
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "telegram_bot.py"]

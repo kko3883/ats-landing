@@ -66,6 +66,28 @@ services:
       # Do NOT use 4002 (the gateway's direct listener) — a container connects as an untrusted
       # external IP and the API handshake fails ("Failed to receive server version information").
       IBG_PORT: "4004"
+      STATE_PATH: /state/state.json   # daemon writes the snapshot the bot reads
       TZ: Asia/Hong_Kong
+    volumes:
+      - ats-state:/state
     labels:
       - "autoheal=true"
+
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: ats-telegram-bot
+    restart: unless-stopped
+    env_file:
+      - .env                         # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    environment:
+      STATE_PATH: /state/state.json
+      TZ: Asia/Hong_Kong
+    volumes:
+      - ats-state:/state             # read the daemon's snapshot
+    labels:
+      - "autoheal=true"
+
+volumes:
+  ats-state:        # shared state.json between daemon and bot (both run as root → no uid clash)

@@ -22,10 +22,12 @@ the order-factory trailing-stop signature, and the position-event hooks all load
 Nautilus is Beta, so re-verify if you bump the version. Runtime behaviour (live fills,
 reconciliation) still needs a paper run before you trust it.
 """
+import json
 import os
 import threading
 import urllib.parse
 import urllib.request
+from datetime import timedelta
 from decimal import Decimal
 
 from nautilus_trader.config import StrategyConfig
@@ -89,6 +91,9 @@ class FourLevelStrategy(Strategy):
         super().__init__(config)
         self._state: dict[InstrumentId, _InstState] = {}
         self._bar_types: dict[InstrumentId, BarType] = {}
+        self._latest: dict[InstrumentId, dict] = {}          # last signal per pair (for /status)
+        self._state_path = os.environ.get("STATE_PATH")      # set in live deploy; unset in backtest
+        self._state_interval = int(os.environ.get("STATE_INTERVAL_SECS", "30"))
 
     # ── lifecycle ──────────────────────────────────────────────────────────
     def on_start(self):
@@ -106,6 +111,13 @@ class FourLevelStrategy(Strategy):
             self.subscribe_bars(bar_type)
             self.log.info(f"Subscribed {bar_type}")
         self._notify("🟢 ATS FX strategy started (paper) — " + ", ".join(str(i) for i in self._bar_types))
+        if self._state_path:
+            self.clock.set_timer(
+                "ats_state_snapshot",
+                timedelta(seconds=self._state_interval),
+                callback=self._on_state_timer,
+            )
+            self._write_state()
 
     def on_stop(self):
         # Cancel resting working orders, but deliberately do NOT flatten:
@@ -122,6 +134,12 @@ class FourLevelStrategy(Strategy):
 
         level, rsi = self._compute_level(st, float(bar.close))
         signal, conf = self._derive_signal(level, rsi)
+
+        self._latest[iid] = {
+            "level": level, "rsi": round(rsi, 1), "signal": signal, "confidence": conf,
+            "price": round(float(bar.close), 5), "ts": self.clock.utc_now().isoformat(),
+        }
+        self._write_state()
 
         net = self.portfolio.net_position(iid)  # Decimal: >0 long, <0 short, 0 flat
 
@@ -297,6 +315,52 @@ class FourLevelStrategy(Strategy):
                 self.log.warning(f"Telegram notify failed: {exc}")
 
         threading.Thread(target=_send, daemon=True).start()
+
+    # ── state snapshot (for the Telegram bot) ────────────────────────────
+    def _on_state_timer(self, event):
+        self._write_state()
+
+    def _write_state(self):
+        """Snapshot live state to STATE_PATH for the Telegram bot. No-op if unset; never raises."""
+        if not self._state_path:
+            return
+        try:
+            signals = {str(iid): v for iid, v in self._latest.items()}
+            positions = []
+            for pos in self.cache.positions_open():
+                positions.append({
+                    "pair": str(pos.instrument_id),
+                    "side": "LONG" if pos.is_long else "SHORT",
+                    "size": str(pos.quantity),
+                    "entry": str(pos.avg_px_open),
+                })
+            stops = {}
+            for o in self.cache.orders_open():
+                tp = getattr(o, "trigger_price", None)
+                if tp is not None:
+                    stops[str(o.instrument_id)] = str(tp)
+            account = []
+            try:
+                venue = next(iter(self._bar_types)).venue if self._bar_types else None
+                acct = self.cache.account_for_venue(venue) if venue else None
+                if acct is not None:
+                    account = [str(v) for v in acct.balances_total().values()]
+            except Exception:
+                pass
+            snapshot = {
+                "ts": self.clock.utc_now().isoformat(),
+                "trading_enabled": True,
+                "signals": signals,
+                "positions": positions,
+                "stops": stops,
+                "account": account,
+            }
+            tmp = self._state_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(snapshot, f, default=str)
+            os.replace(tmp, self._state_path)
+        except Exception as exc:
+            self.log.warning(f"state snapshot failed: {exc}")
 
     # ── helpers ────────────────────────────────────────────────────────────
     @staticmethod
