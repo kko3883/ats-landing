@@ -490,6 +490,7 @@ def check_for_alerts(old_state: dict, new_signals: list[dict]) -> list[dict]:
 # ═══════════════════════════════════════════
 
 _ib = None
+_ib_client_id = 1  # persistent clientId; changed only on reconnect-after-conflict
 TRADE_COOLDOWN = {}
 
 FX_CONTRACT_MAP = {
@@ -511,7 +512,7 @@ async def ensure_ib_async():
     """Async IBKR connection manager with short timeout. Returns ib instance or None.
     If IBKR server is unreachable (Error 1100), returns None gracefully so the
     daemon can continue in data-only mode with yfinance."""
-    global _ib
+    global _ib, _ib_client_id
     try:
         if _ib and _ib.isConnected():
             # Fast ping with 3s timeout — if IBKR server is down, don't block
@@ -532,17 +533,59 @@ async def ensure_ib_async():
             except:
                 pass
         _ib = ib.IB()
+        loop = asyncio.get_event_loop()
         await asyncio.wait_for(
-            _ib.connectAsync('127.0.0.1', 4002, clientId=1),
+            _ib.connectAsync('127.0.0.1', 4002, clientId=_ib_client_id),
             timeout=5
         )
-        log.info("🔗 Async IBKR connection established")
+        log.info(f"🔗 Async IBKR connection established (clientId={_ib_client_id})")
         return _ib
     except asyncio.TimeoutError:
-        log.warning("⏱️ IBKR connection timed out — running data-only mode")
+        old_id = _ib_client_id
+        _ib_client_id = random.randint(2, 9999)
+        log.warning(f"⏱️ IBKR connect timed out (clientId={old_id} likely stale) → retrying with {_ib_client_id}")
+        try:
+            if _ib:
+                try:
+                    _ib.disconnect()
+                except:
+                    pass
+            _ib = ib.IB()
+            await asyncio.wait_for(
+                _ib.connectAsync('127.0.0.1', 4002, clientId=_ib_client_id),
+                timeout=5
+            )
+            log.info(f"🔗 Reconnected with new clientId={_ib_client_id}")
+            return _ib
+        except asyncio.TimeoutError:
+            log.warning("⏱️ IBKR retry also timed out — running data-only mode")
+        except Exception as e2:
+            log.warning(f"⚠️ IBKR retry failed: {e2}")
         return None
     except Exception as e:
-        log.warning(f"⚠️ IBKR connection failed: {e}")
+        err_str = str(e)
+        if '326' in err_str or 'already in use' in err_str.lower():
+            old_id = _ib_client_id
+            _ib_client_id = random.randint(2, 9999)
+            log.warning(f"⚠️ clientId {old_id} already in use → retrying with {_ib_client_id}")
+            # Retry once with new clientId
+            try:
+                if _ib:
+                    try:
+                        _ib.disconnect()
+                    except:
+                        pass
+                _ib = ib.IB()
+                await asyncio.wait_for(
+                    _ib.connectAsync('127.0.0.1', 4002, clientId=_ib_client_id),
+                    timeout=5
+                )
+                log.info(f"🔗 Reconnected with new clientId={_ib_client_id}")
+                return _ib
+            except Exception as e2:
+                log.warning(f"⚠️ Reconnect also failed: {e2}")
+        else:
+            log.warning(f"⚠️ IBKR connection failed: {e}")
         return None
 
 
@@ -996,58 +1039,125 @@ async def run_daemon_async():
         old_state['positions'] = {}
 
     tick_count = 0
+    signal_tick_count = 0
     current_interval = BASE_INTERVAL
+
+    # Cached data between signal ticks
+    df_dict = {}
+    all_signals = []
+    eur_analysis = None
+    carry_analysis = []
+    positions = old_state.get('positions', {})  # init from saved state
+
+    SIGNAL_TICK_EVERY = 12  # Run signal analysis every 12 ticks (~10-12 min)
 
     while running:
         tick_start = time.time()
         tick_count += 1
 
         try:
-            # 1. Fetch data (yfinance is sync — wrapped in ThreadPoolExecutor with 15s timeout)
-            eur_df = fetch_fx('EURUSD=X')
-            aud_df = fetch_fx('AUDJPY=X')
-            nzd_df = fetch_fx('NZDJPY=X')
+            # ════════════════════════════════════════════
+            # A. SIGNAL ANALYSIS — 1h bars (changes ~hourly)
+            # ════════════════════════════════════════════
+            if tick_count % SIGNAL_TICK_EVERY == 1 or not df_dict:
+                signal_tick_count += 1
+                log.info(f"📊 Signal tick #{signal_tick_count} — fetching 1h bars (every {SIGNAL_TICK_EVERY} ticks)")
 
-            df_dict = {'EURUSD=X': eur_df, 'AUDJPY=X': aud_df, 'NZDJPY=X': nzd_df}
+                eur_df = fetch_fx('EURUSD=X')
+                aud_df = fetch_fx('AUDJPY=X')
+                nzd_df = fetch_fx('NZDJPY=X')
+                df_dict = {'EURUSD=X': eur_df, 'AUDJPY=X': aud_df, 'NZDJPY=X': nzd_df}
 
-            # ── Daily loss limit check (every 20 ticks) ──
-            if kill_switched:
-                if old_state.get('positions'):
-                    log.info(f"🔴 KILL SWITCH active — managing exits only")
+                # Analyse all pairs
+                all_signals = []
+                for ticker, df in df_dict.items():
+                    if df is not None:
+                        sig = analyze_pair(ticker, df)
+                        if sig:
+                            all_signals.append(sig)
 
-            if not kill_switched and tick_count % 20 == 0:
-                try:
-                    equity, currency = await get_account_summary_async()
-                    if equity is not None:
-                        if daily_start_equity is None:
-                            daily_start_equity = equity
-                            daily_low_equity = equity
-                            log.info(f"💰 Daily starting equity: {equity:.2f} {currency or 'HKD'}")
-                        daily_low_equity = min(daily_low_equity, equity)
-                        daily_pnl_pct = (equity - daily_start_equity) / daily_start_equity * 100
-                        if daily_pnl_pct <= DAILY_LOSS_LIMIT_PCT:
-                            log.warning(f"🔴 KILL SWITCH TRIGGERED — daily P&L {daily_pnl_pct:.2f}% (limit {DAILY_LOSS_LIMIT_PCT}%)")
-                            kill_switched = True
-                except Exception as e:
-                    log.warning(f"⚠️ Could not check daily P&L: {e}")
+                eur_analysis = None
+                carry_analysis = []
+                for sig in all_signals:
+                    if sig['pair'] == 'EUR/USD':
+                        eur_analysis = sig
+                    else:
+                        carry_analysis.append(sig)
 
-            # 2. Analyze all pairs with the unified 4-level system
-            all_signals = []
-            for ticker, df in df_dict.items():
-                if df is not None:
-                    sig = analyze_pair(ticker, df)
-                    if sig:
-                        all_signals.append(sig)
+                # Check for NEW entry signals (only when 1h bars are fresh)
+                alerts = check_for_alerts(old_state, all_signals)
+                if alerts:
+                    for alert in alerts:
+                        log.info(f"🚨 {alert['message']}")
+                        if alert['data'].get('confidence', 0) >= 2 and not kill_switched:
+                            pair = alert['data']['pair']
+                            atr_val = calculate_atr_for_df(df_dict, pair)
+                            existing_pos = positions.get(pair, {})
+                            existing_dir = existing_pos.get('direction')
+                            new_dir = alert['data']['signal']
+                            existing_size = existing_pos.get('size', 0)
+                            entries = existing_pos.get('entries', 0)
+                            last_entry = existing_pos.get('last_entry_time')
 
-            eur_analysis = None
-            carry_analysis = []
-            for sig in all_signals:
-                if sig['pair'] == 'EUR/USD':
-                    eur_analysis = sig
-                else:
-                    carry_analysis.append(sig)
+                            if existing_pos and existing_dir != new_dir:
+                                log.info(f"⏭️ Skipping {pair} {new_dir} — opposite {existing_dir} exists")
+                                trade_result = {'skipped': True, 'reason': f'opposite {existing_dir} exists', 'pair': pair}
+                            elif existing_pos and entries >= MAX_POSITIONS_PER_PAIR:
+                                log.info(f"⏭️ Skipping {pair} {new_dir} — already at max {MAX_POSITIONS_PER_PAIR} entries")
+                                trade_result = {'skipped': True, 'reason': f'max {MAX_POSITIONS_PER_PAIR} entries', 'pair': pair}
+                            elif existing_pos and last_entry:
+                                gap = (time.time() - last_entry) if isinstance(last_entry, (int, float)) else 9999
+                                if gap < COOLDOWN_AFTER_TRADE:
+                                    log.info(f"⏭️ Skipping {pair} {new_dir} — only {gap:.0f}s since last entry")
+                                    trade_result = {'skipped': True, 'reason': f'cooldown {gap:.0f}s/{COOLDOWN_AFTER_TRADE}s', 'pair': pair}
+                                else:
+                                    trade_result = await place_trade_async(pair, new_dir, alert['data']['price'], atr_val, existing_size)
+                            elif existing_pos:
+                                trade_result = {'skipped': True, 'reason': 'existing pos no entry time', 'pair': pair}
+                            else:
+                                trade_result = await place_trade_async(pair, new_dir, alert['data']['price'], atr_val, 0)
 
-            # 3. Manage open positions — fetch fresh real-time price (not stale 1h bar close)
+                            if 'error' not in trade_result and 'skipped' not in trade_result:
+                                total = trade_result.get('total_size', trade_result['size'])
+                                avg_entry = trade_result['price']
+                                log.info(f"✅ Trade placed: {trade_result['action']} {trade_result['size']} (total: {total}) @ ~{trade_result['price']}")
+                                pos = {
+                                    'entry_price': avg_entry, 'direction': alert['data']['signal'],
+                                    'size': total, 'entries': existing_pos.get('entries', 0) + 1,
+                                    'entry_prices': existing_pos.get('entry_prices', []) + [avg_entry],
+                                    'last_entry_time': time.time(),
+                                    'highest_price': trade_result['price'], 'lowest_price': trade_result['price'],
+                                    'stop_price': trade_result.get('stop_price'),
+                                    'stop_order_id': trade_result.get('stop_order_id'),
+                                    'entry_time': ts(), 'pair': pair,
+                                }
+                                positions[pair] = pos
+                            elif 'error' in trade_result:
+                                log.warning(f"❌ Trade failed: {trade_result['error']}")
+
+                        alert['message'] = format_entry_alert(alert['data'], alert.get('trade_result'))
+                        save_json(ALERT_FILE, alert)
+
+                # ── Daily loss limit check (every signal tick) ──
+                if not kill_switched:
+                    try:
+                        equity, currency = await get_account_summary_async()
+                        if equity is not None:
+                            if daily_start_equity is None:
+                                daily_start_equity = equity
+                                daily_low_equity = equity
+                                log.info(f"💰 Daily starting equity: {equity:.2f} {currency or 'HKD'}")
+                            daily_low_equity = min(daily_low_equity, equity)
+                            daily_pnl_pct = (equity - daily_start_equity) / daily_start_equity * 100
+                            if daily_pnl_pct <= DAILY_LOSS_LIMIT_PCT:
+                                log.warning(f"🔴 KILL SWITCH TRIGGERED — daily P&L {daily_pnl_pct:.2f}%")
+                                kill_switched = True
+                    except Exception as e:
+                        log.warning(f"⚠️ Could not check daily P&L: {e}")
+
+            # ════════════════════════════════════════════
+            # B. POSITION MANAGEMENT — every tick (real-time prices)
+            # ════════════════════════════════════════════
             current_prices = {}
             pair_map = {'EUR/USD': 'EURUSD=X', 'AUD/JPY': 'AUDJPY=X', 'NZD/JPY': 'NZDJPY=X'}
             loop = asyncio.get_event_loop()
@@ -1056,32 +1166,39 @@ async def run_daemon_async():
                 if price is not None:
                     current_prices[pair] = price
                 elif ticker in df_dict and df_dict[ticker] is not None:
-                    # Fallback to 1h bar close if real-time price failed
                     df = df_dict[ticker]
                     c = close_series(df)
                     current_prices[pair] = float(c.iloc[-1])
-            exits, stop_updates, positions = await manage_positions_async(old_state, df_dict, all_signals, current_prices)
 
-            # 3a. Periodic IBKR sync (every 10 ticks)
-            if tick_count > 0 and tick_count % 10 == 0:
+            if positions:
+                exits, stop_updates, positions = await manage_positions_async(
+                    old_state, df_dict, all_signals, current_prices
+                )
+            else:
+                exits, stop_updates = [], []
+
+            # ── IBKR position sync (every signal tick) ──
+            if tick_count % SIGNAL_TICK_EVERY == 1:
                 ibrk_now = await sync_positions_from_ibrk_async()
                 if ibrk_now:
                     for pair, ibrk_p in ibrk_now.items():
                         existing = positions.get(pair)
-                        if existing:
-                            if ibrk_p['size'] != existing.get('size', 0):
-                                log.info(f"📡 Position size drift fixed: {pair} state={existing.get('size')} → IBKR={ibrk_p['size']}")
-                                positions[pair]['size'] = ibrk_p['size']
+                        if existing and ibrk_p['size'] != existing.get('size', 0):
+                            log.info(f"📡 Position size drift fixed: {pair} state={existing.get('size')} → IBKR={ibrk_p['size']}")
+                            positions[pair]['size'] = ibrk_p['size']
 
-            # 4. Build new state
+            # ════════════════════════════════════════════
+            # C. SAVE STATE
+            # ════════════════════════════════════════════
             new_state = {
                 'eur_usd': eur_analysis or {},
                 'carry': carry_analysis,
                 'positions': positions,
+                'current_prices': current_prices,
                 'last_tick': ts(),
             }
 
-            # 5. Handle exit events
+            # Exit events
             for exit_event in exits:
                 save_json(ALERT_FILE, exit_event)
                 log.info(f"🛑 {exit_event['message']}")
@@ -1090,98 +1207,29 @@ async def run_daemon_async():
                 for su in stop_updates[-3:]:
                     log.info(f"↗️  Stop moved: {su['pair']} → {su['new_stop']} (ATR: {su['atr']})")
 
-            # 6. Check for new entry signals
-            alerts = check_for_alerts(old_state, all_signals)
+            # Kill-switch mode
+            if kill_switched and old_state.get('positions'):
+                log.info(f"🔴 KILL SWITCH active — managing exits only")
 
-            if alerts:
-                for alert in alerts:
-                    log.info(f"🚨 {alert['message']}")
-
-                    if alert['data'].get('confidence', 0) >= 2:
-                        pair = alert['data']['pair']
-                        atr_val = calculate_atr_for_df(df_dict, pair)
-
-                        existing_pos = positions.get(pair, {})
-                        existing_dir = existing_pos.get('direction')
-                        new_dir = alert['data']['signal']
-                        existing_size = existing_pos.get('size', 0)
-                        entries = existing_pos.get('entries', 0)
-                        last_entry = existing_pos.get('last_entry_time')
-
-                        if existing_pos:
-                            if existing_dir != new_dir:
-                                log.info(f"⏭️ Skipping {pair} {new_dir} — opposite {existing_dir} exists")
-                                trade_result = {'skipped': True, 'reason': f'opposite {existing_dir} exists', 'pair': pair}
-                            elif entries >= MAX_POSITIONS_PER_PAIR:
-                                log.info(f"⏭️ Skipping {pair} {new_dir} — already at max {MAX_POSITIONS_PER_PAIR} entries")
-                                trade_result = {'skipped': True, 'reason': f'max {MAX_POSITIONS_PER_PAIR} entries', 'pair': pair}
-                            elif last_entry:
-                                gap = (time.time() - last_entry) if isinstance(last_entry, (int, float)) else 9999
-                                if gap < COOLDOWN_AFTER_TRADE:
-                                    log.info(f"⏭️ Skipping {pair} {new_dir} — only {gap:.0f}s since last entry (need {COOLDOWN_AFTER_TRADE}s)")
-                                    trade_result = {'skipped': True, 'reason': f'cooldown {gap:.0f}s/{COOLDOWN_AFTER_TRADE}s', 'pair': pair}
-                                else:
-                                    trade_result = await place_trade_async(pair, new_dir, alert['data']['price'], atr_val, existing_size)
-                            else:
-                                trade_result = {'skipped': True, 'reason': 'existing pos no entry time', 'pair': pair}
-                        elif kill_switched:
-                            log.warning(f"🔴 Skipping {pair} {new_dir} — kill switch active")
-                            trade_result = {'skipped': True, 'reason': 'kill switch active', 'pair': pair}
-                        else:
-                            trade_result = await place_trade_async(pair, new_dir, alert['data']['price'], atr_val, 0)
-
-                        alert['trade_result'] = trade_result
-
-                        if 'error' not in trade_result and 'skipped' not in trade_result:
-                            total = trade_result.get('total_size', trade_result['size'])
-                            avg_entry = trade_result['price']
-                            log.info(f"✅ Trade placed: {trade_result['action']} {trade_result['size']} (total: {total}) @ ~{trade_result['price']}")
-                            if trade_result.get('stop_price'):
-                                log.info(f"🛡️  Initial stop: {trade_result['stop_price']} (covers {total})")
-
-                            existing = new_state.get('positions', {}).get(pair, {})
-                            prev_count = existing.get('entries', 0)
-                            prev_prices = existing.get('entry_prices', [])
-
-                            pos = {
-                                'entry_price': avg_entry,
-                                'direction': alert['data']['signal'],
-                                'size': total,
-                                'entries': prev_count + 1,
-                                'entry_prices': prev_prices + [avg_entry],
-                                'last_entry_time': time.time(),
-                                'highest_price': trade_result['price'],
-                                'lowest_price': trade_result['price'],
-                                'stop_price': trade_result.get('stop_price'),
-                                'stop_order_id': trade_result.get('stop_order_id'),
-                                'entry_time': ts(),
-                                'pair': pair,
-                            }
-                            log.info(f"📌 {pair}: entry #{pos['entries']}/{MAX_POSITIONS_PER_PAIR} @ {avg_entry}")
-                            new_state['positions'][pair] = pos
-                        elif 'error' in trade_result:
-                            log.warning(f"❌ Trade failed: {trade_result['error']}")
-                        elif 'skipped' in trade_result:
-                            log.info(f"⏳ Trade skipped: {trade_result['reason']}")
-
-                    alert['message'] = format_entry_alert(alert['data'], alert.get('trade_result'))
-                    save_json(ALERT_FILE, alert)
-
-            # 7. Adaptive polling
-            proximity = calculate_proximity(all_signals, positions)
+            # ════════════════════════════════════════════
+            # D. ADAPTIVE POLLING + SLEEP
+            # ════════════════════════════════════════════
+            if positions:
+                proximity = 30  # always warm when in positions
+            else:
+                proximity = calculate_proximity(all_signals, positions) if all_signals else 0
             new_interval = get_poll_interval(proximity)
 
             if new_interval != current_interval:
                 log.info(f"📊 Proximity: {proximity} → poll {current_interval}s → {new_interval}s")
                 current_interval = new_interval
 
-            # 8. Save state
             new_state['poll_interval'] = current_interval
             new_state['proximity'] = proximity
             save_json(STATE_FILE, new_state)
             old_state = new_state
 
-            # 9. Heartbeat log
+            # Heartbeat every 20 ticks
             if tick_count % 20 == 0:
                 parts = [f"prox:{proximity} poll:{current_interval}s"]
                 if daily_start_equity is not None:
@@ -1197,13 +1245,11 @@ async def run_daemon_async():
                         parts.append(f"📌{p}: stop@{pos.get('stop_price','?')}")
                 log.info(f"[Heartbeat] {' | '.join(parts)}")
 
-            # 10. Sleep adaptively (async — won't block)
+            # Async sleep
             elapsed = time.time() - tick_start
             sleep_time = max(0.5, current_interval - elapsed)
-
             for h in log.handlers:
                 h.flush()
-
             await asyncio.sleep(sleep_time)
 
         except asyncio.CancelledError:
