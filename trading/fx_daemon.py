@@ -130,13 +130,13 @@ async def subscribe_account_summary_async(ib_client=None):
         log.warning(f"💰 Account summary subscribe failed: {e}")
         return False
 
-def read_account_balance(ib_client=None) -> dict | None:
-    """Read cached account summary — called every tick after subscription."""
+async def read_account_balance_async(ib_client=None) -> dict | None:
+    """Read cached account summary via async API — called every tick after subscription."""
     global _account_summary_subscribed
     if not _account_summary_subscribed or not ib_client or not ib_client.isConnected():
         return None
     try:
-        summary = ib_client.accountSummary()
+        summary = await ib_client.accountSummaryAsync()
         result = {}
         for av in summary:
             if av.tag in ('TotalCashValue', 'NetLiquidation', 'UnrealizedPnL', 'BuyingPower'):
@@ -1339,7 +1339,7 @@ async def run_daemon_async():
             # ════════════════════════════════════════════
             account_balance = old_state.get('account_balance', {})
             if tick_count % 20 == 0:
-                bal = read_account_balance(ib_client)
+                bal = await read_account_balance_async(ib_client)
                 if bal:
                     account_balance = bal
                     log.debug(f"💰 Balance: NetLiq={bal.get('NetLiquidation','?')} Cash={bal.get('TotalCashValue','?')}")
