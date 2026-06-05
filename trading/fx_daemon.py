@@ -1242,25 +1242,52 @@ async def run_daemon_async():
             if tick_count % SIGNAL_TICK_EVERY == 1:
                 ibrk_now = await sync_positions_from_ibrk_async()
                 if ibrk_now:
+                    pair_map = {'EUR/USD': 'EURUSD=X', 'AUD/JPY': 'AUDJPY=X', 'NZD/JPY': 'NZDJPY=X'}
                     for pair, ibrk_p in ibrk_now.items():
                         existing = positions.get(pair)
-                        if existing and ibrk_p['size'] != existing.get('size', 0):
-                            log.info(f"📡 Position size drift fixed: {pair} state={existing.get('size')} → IBKR={ibrk_p['size']}")
-                            positions[pair]['size'] = ibrk_p['size']
-                        elif not existing and pair not in _pending_exits:
+                        if existing:
+                            if existing.get('stop_price') is None:
+                                # Position exists but has no stop — calculate one
+                                entry = existing['entry_price'] or ibrk_p.get('avgCost', current_prices.get(pair, 0))
+                                ticker = pair_map.get(pair)
+                                atr_val = calculate_atr(df_dict.get(ticker)) if ticker and df_dict.get(ticker) is not None else None
+                                pair_type = PAIR_TYPE.get(pair, 'trend')
+                                atr_mult = CARRY_SAFETY_ATR if pair_type == 'carry' else ATR_STOP_MULTIPLIER
+                                if ibrk_p['direction'] == 'LONG':
+                                    stop_price = round(entry - (atr_val * atr_mult), 3 if 'JPY' in pair else 5) if atr_val else None
+                                else:
+                                    stop_price = round(entry + (atr_val * atr_mult), 3 if 'JPY' in pair else 5) if atr_val else None
+                                if stop_price:
+                                    positions[pair]['stop_price'] = stop_price
+                                    log.info(f"🛡️  Stop restored for {pair}: {stop_price}")
+                            # Fix size drift
+                            if ibrk_p['size'] != existing.get('size', 0):
+                                log.info(f"📡 Position size drift fixed: {pair} state={existing.get('size')} → IBKR={ibrk_p['size']}")
+                                positions[pair]['size'] = ibrk_p['size']
+                        elif pair not in _pending_exits:
                             # IBKR has a position not in state — likely from a failed close
-                            log.warning(f"📡 Orphan position in IBKR: {pair} {ibrk_p['direction']} {ibrk_p['size']} — adding to retry queue")
+                            log.warning(f"📡 Orphan position in IBKR: {pair} {ibrk_p['direction']} {ibrk_p['size']} — restoring with ATR stop")
+                            entry = ibrk_p.get('avgCost', current_prices.get(pair, 0)) or current_prices.get(pair, 0)
+                            ticker = pair_map.get(pair)
+                            atr_val = calculate_atr(df_dict.get(ticker)) if ticker and df_dict.get(ticker) is not None else None
+                            pair_type = PAIR_TYPE.get(pair, 'trend')
+                            atr_mult = CARRY_SAFETY_ATR if pair_type == 'carry' else ATR_STOP_MULTIPLIER
+                            if ibrk_p['direction'] == 'LONG':
+                                stop_price = round(entry - (atr_val * atr_mult), 3 if 'JPY' in pair else 5) if atr_val else None
+                                highest = entry; lowest = entry
+                            else:
+                                stop_price = round(entry + (atr_val * atr_mult), 3 if 'JPY' in pair else 5) if atr_val else None
+                                highest = entry; lowest = entry
                             positions[pair] = {
-                                'direction': ibrk_p['direction'],
-                                'size': ibrk_p['size'],
-                                'entry_price': ibrk_p.get('avgCost', 0),
-                                'stop_price': None, 'stop_order_id': None,
-                                'entries': 1, 'entry_prices': [ibrk_p.get('avgCost', 0)],
+                                'direction': ibrk_p['direction'], 'size': ibrk_p['size'],
+                                'entry_price': entry, 'stop_price': stop_price, 'stop_order_id': None,
+                                'entries': 1, 'entry_prices': [entry],
                                 'last_entry_time': time.time(),
-                                'highest_price': 0, 'lowest_price': 0,
+                                'highest_price': highest, 'lowest_price': lowest,
                                 'entry_time': ts(), 'pair': pair,
                             }
-                            _pending_exits.add(pair)
+                            if stop_price:
+                                log.info(f"🛡️  Stop restored for {pair}: {stop_price}")
 
             # ════════════════════════════════════════════
             # C. SAVE STATE
