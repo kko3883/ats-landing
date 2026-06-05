@@ -22,6 +22,10 @@ the order-factory trailing-stop signature, and the position-event hooks all load
 Nautilus is Beta, so re-verify if you bump the version. Runtime behaviour (live fills,
 reconciliation) still needs a paper run before you trust it.
 """
+import os
+import threading
+import urllib.parse
+import urllib.request
 from decimal import Decimal
 
 from nautilus_trader.config import StrategyConfig
@@ -101,6 +105,7 @@ class FourLevelStrategy(Strategy):
             self.request_bars(bar_type)
             self.subscribe_bars(bar_type)
             self.log.info(f"Subscribed {bar_type}")
+        self._notify("🟢 ATS FX strategy started (paper) — " + ", ".join(str(i) for i in self._bar_types))
 
     def on_stop(self):
         # Cancel resting working orders, but deliberately do NOT flatten:
@@ -260,6 +265,38 @@ class FourLevelStrategy(Strategy):
         # Belt-and-suspenders: ensure no resting protective order survives a close.
         self.cancel_all_orders(iid)
         self.log.info(f"Position closed {iid}: realized PnL {event.realized_pnl}")
+        self._notify(
+            f"🛑 Closed {iid} @ {event.avg_px_close} | PnL {event.realized_pnl} "
+            f"({event.realized_return:+.2%})"
+        )
+
+    # ── notifications (Telegram) ─────────────────────────────────────────
+    def on_order_filled(self, event):
+        side = "BUY" if event.is_buy else "SELL"
+        self._notify(f"✅ Filled {side} {event.last_qty} {event.instrument_id} @ {event.last_px}")
+
+    def on_order_rejected(self, event):
+        self.log.warning(f"Order rejected {event.instrument_id}: {event.reason}")
+        self._notify(f"❌ Order REJECTED {event.instrument_id}: {event.reason}")
+
+    def _notify(self, text: str):
+        """Fire-and-forget Telegram message. No-op if env vars unset; never raises."""
+        token = os.environ.get("TELEGRAM_BOT_TOKEN")
+        chat = os.environ.get("TELEGRAM_CHAT_ID")
+        if not token or not chat:
+            return
+
+        def _send():
+            try:
+                data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
+                req = urllib.request.Request(
+                    f"https://api.telegram.org/bot{token}/sendMessage", data=data
+                )
+                urllib.request.urlopen(req, timeout=10)
+            except Exception as exc:
+                self.log.warning(f"Telegram notify failed: {exc}")
+
+        threading.Thread(target=_send, daemon=True).start()
 
     # ── helpers ────────────────────────────────────────────────────────────
     @staticmethod
