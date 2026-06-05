@@ -21,6 +21,12 @@ import urllib.request
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = str(os.environ["TELEGRAM_CHAT_ID"])
 STATE_PATH = os.environ.get("STATE_PATH", "/state/state.json")
+CONTROL_PATH = os.environ.get("CONTROL_PATH", "/state/control.json")
+PAIRS = {  # normalized user input -> instrument id the daemon uses
+    "EURUSD": "EUR/USD.IDEALPRO",
+    "AUDJPY": "AUD/JPY.IDEALPRO",
+    "NZDJPY": "NZD/JPY.IDEALPRO",
+}
 API = f"https://api.telegram.org/bot{TOKEN}"
 
 
@@ -44,6 +50,42 @@ def load_state():
             return json.load(f)
     except Exception:
         return None
+
+
+def load_control():
+    try:
+        with open(CONTROL_PATH) as f:
+            c = json.load(f)
+    except Exception:
+        c = {}
+    c.setdefault("trading_enabled", True)
+    c.setdefault("pairs", {})
+    return c
+
+
+def save_control(c):
+    tmp = CONTROL_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(c, f, indent=2)
+    os.replace(tmp, CONTROL_PATH)
+
+
+def set_trading(enabled: bool) -> str:
+    c = load_control()
+    c["trading_enabled"] = enabled
+    save_control(c)
+    return ("▶️ Trading RESUMED — new entries allowed." if enabled
+            else "⏸️ Trading PAUSED — no new entries (open positions still managed).")
+
+
+def set_pair(arg: str, enabled: bool) -> str:
+    iid = PAIRS.get(arg.strip().upper().replace("/", ""))
+    if not iid:
+        return f"Unknown pair '{arg}'. Use one of: EURUSD, AUDJPY, NZDJPY."
+    c = load_control()
+    c["pairs"][iid] = enabled
+    save_control(c)
+    return f"{iid}: {'✅ enabled' if enabled else '🚫 disabled'}."
 
 
 def _fmt_signals(s) -> list[str]:
@@ -86,6 +128,9 @@ def fmt_status(s) -> str:
         f"📊 ATS FX — {s.get('ts', '?')}",
         f"Trading: {'🟢 ON' if on else '🔴 PAUSED'}",
     ]
+    disabled = [p for p, en in (s.get("pairs") or {}).items() if not en]
+    if disabled:
+        lines.append("Disabled: " + ", ".join(disabled))
     lines += _fmt_balance(s)
     lines.append("")
     lines += _fmt_signals(s)
@@ -105,6 +150,15 @@ def handle(text: str) -> str:
         return "\n".join(_fmt_balance(s)) if s else "⚠️ No state yet."
     if cmd == "signal":
         return "\n".join(_fmt_signals(s)) if s else "⚠️ No state yet."
+    if cmd == "pause":
+        return set_trading(False)
+    if cmd == "resume":
+        return set_trading(True)
+    if cmd in ("enable", "disable"):
+        parts = text.strip().split()
+        if len(parts) < 2:
+            return f"Usage: /{cmd} EURUSD"
+        return set_pair(parts[1], cmd == "enable")
     if cmd == "help":
         return (
             "Commands:\n"
@@ -112,8 +166,12 @@ def handle(text: str) -> str:
             "/positions — open positions + stops\n"
             "/balance — account balance\n"
             "/signal — current signal per pair\n"
+            "/pause — halt new entries (keeps managing open positions)\n"
+            "/resume — allow new entries again\n"
+            "/disable EURUSD — stop entering one pair\n"
+            "/enable EURUSD — re-enable a pair\n"
             "/help — this list\n\n"
-            "(switches /pause /resume and tuning /set coming in phase 2/3)"
+            "(tuning /set coming in phase 3)"
         )
     return "Unknown command. Send /help for the list."
 

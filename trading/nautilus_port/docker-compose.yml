@@ -66,7 +66,8 @@ services:
       # Do NOT use 4002 (the gateway's direct listener) — a container connects as an untrusted
       # external IP and the API handshake fails ("Failed to receive server version information").
       IBG_PORT: "4004"
-      STATE_PATH: /state/state.json   # daemon writes the snapshot the bot reads
+      STATE_PATH: /state/state.json      # daemon writes the snapshot the bot reads
+      CONTROL_PATH: /state/control.json  # daemon reads the switches the bot writes
       TZ: Asia/Hong_Kong
     volumes:
       - ats-state:/state
@@ -83,9 +84,10 @@ services:
       - .env                         # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     environment:
       STATE_PATH: /state/state.json
+      CONTROL_PATH: /state/control.json
       TZ: Asia/Hong_Kong
     volumes:
-      - ats-state:/state             # read the daemon's snapshot
+      - ats-state:/state             # read snapshot + write control.json
     labels:
       - "autoheal=true"
 

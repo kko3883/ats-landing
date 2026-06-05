@@ -93,6 +93,7 @@ class FourLevelStrategy(Strategy):
         self._bar_types: dict[InstrumentId, BarType] = {}
         self._latest: dict[InstrumentId, dict] = {}          # last signal per pair (for /status)
         self._state_path = os.environ.get("STATE_PATH")      # set in live deploy; unset in backtest
+        self._control_path = os.environ.get("CONTROL_PATH")  # switches the Telegram bot writes
         self._state_interval = int(os.environ.get("STATE_INTERVAL_SECS", "30"))
         self._snap_stop = threading.Event()
         self._snap_thread = None
@@ -148,8 +149,15 @@ class FourLevelStrategy(Strategy):
             self._manage_exit(iid, net, level, rsi)
             return  # at most one position action per bar
 
-        # 2) Entries (only when flat). No staggering in this skeleton — see README.
+        # 2) Entries (only when flat). Respect the /pause and per-pair switches.
         if signal in ("LONG", "SHORT") and conf >= self.config.min_confidence:
+            ctrl = self._load_control()
+            if not ctrl["trading_enabled"]:
+                self.log.info(f"Entry skipped {iid}: trading paused")
+                return
+            if not ctrl["pairs"].get(str(iid), True):
+                self.log.info(f"Entry skipped {iid}: pair disabled")
+                return
             self._enter(iid, signal, st, bar)
 
     # ── signal engine (ported from fx_daemon.compute_level / analyze_pair) ──
@@ -325,6 +333,22 @@ class FourLevelStrategy(Strategy):
         self._snap_thread = threading.Thread(target=_loop, daemon=True)
         self._snap_thread.start()
 
+    def _load_control(self) -> dict:
+        """Read the bot's control switches. Fail-open (all enabled) if missing/unreadable —
+        the switches are opt-in, so absence means 'trade normally'."""
+        default = {"trading_enabled": True, "pairs": {}}
+        if not self._control_path:
+            return default
+        try:
+            with open(self._control_path) as f:
+                c = json.load(f)
+            return {
+                "trading_enabled": bool(c.get("trading_enabled", True)),
+                "pairs": dict(c.get("pairs", {})),
+            }
+        except Exception:
+            return default
+
     def _write_state(self):
         """Snapshot live state to STATE_PATH for the Telegram bot. No-op if unset; never raises."""
         if not self._state_path:
@@ -351,9 +375,11 @@ class FourLevelStrategy(Strategy):
                     account += [str(v) for v in acct.balances_total().values()]
             except Exception:
                 pass
+            ctrl = self._load_control()
             snapshot = {
                 "ts": self.clock.utc_now().isoformat(),
-                "trading_enabled": True,
+                "trading_enabled": ctrl["trading_enabled"],
+                "pairs": ctrl["pairs"],
                 "signals": signals,
                 "positions": positions,
                 "stops": stops,
