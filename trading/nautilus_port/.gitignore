@@ -1,0 +1,5 @@
+# This repo is PUBLIC — never commit secrets or local state.
+.env
+ibgw-settings/
+__pycache__/
+*.pyc

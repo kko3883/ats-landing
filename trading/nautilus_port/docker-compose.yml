@@ -1,0 +1,57 @@
+# ATS FX — IB Gateway + NautilusTrader daemon, PAPER mode.
+#
+# Runs on the NAS default bridge (home IP). Do NOT attach to the gluetun VPN
+# namespace — IBKR flags logins from VPN/datacenter IPs and will pile on 2FA/holds.
+#
+# docker-compose V1 (Synology): deploy with `sudo docker-compose up -d --build`.
+# See DEPLOY.md for the full runbook.
+
+services:
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    container_name: ib-gateway
+    restart: unless-stopped
+    environment:
+      TWS_USERID: ${TWS_USERID}
+      TWS_PASSWORD: ${TWS_PASSWORD}
+      TRADING_MODE: paper            # 4002. Flip to live (4001) only after the paper run.
+      READ_ONLY_API: "no"            # "no" = allow order placement
+      # Daily token-based restart (no credentials needed) — keeps it 24x7.
+      AUTO_RESTART_TIME: "11:59 PM"
+      # 2FA handling: on a timed-out 2FA, restart and re-prompt rather than die.
+      TWOFA_TIMEOUT_ACTION: restart
+      RELOGIN_AFTER_TWOFA_TIMEOUT: "yes"
+      TIME_ZONE: Asia/Hong_Kong
+      VNC_SERVER_PASSWORD: ${VNC_SERVER_PASSWORD}   # needed to view the desktop for first-login 2FA
+      TWS_SETTINGS_PATH: /home/ibgateway/tws_settings   # explicit, so the mount below persists it
+    ports:
+      # Bind to NAS localhost only — never expose IB to the LAN/internet.
+      - "127.0.0.1:4002:4002"        # API (paper)
+      - "127.0.0.1:5900:5900"        # VNC (reach via SSH tunnel; see DEPLOY.md)
+    volumes:
+      - ./ibgw-settings:/home/ibgateway/tws_settings   # persist IBC/TWS settings across restarts
+    labels:
+      - "autoheal=true"              # match your existing autoheal label if it differs
+    healthcheck:
+      # bash /dev/tcp probe (image is Ubuntu-based, has bash). If your image already
+      # defines a healthcheck you can delete this block.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/4002' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 240s             # first login + 2FA can take a few minutes
+
+  fx-daemon:
+    build: .
+    container_name: ats-fx-daemon
+    restart: unless-stopped
+    depends_on:
+      ib-gateway:
+        condition: service_healthy
+    environment:
+      IBG_HOST: ib-gateway           # reach the gateway by its compose service name
+      IBG_PORT: "4002"               # paper
+      IB_ACCOUNT_ID: ${IB_ACCOUNT_ID}
+      TZ: Asia/Hong_Kong
+    labels:
+      - "autoheal=true"

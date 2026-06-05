@@ -1,0 +1,2 @@
+# Keep shell scripts LF so they run on the NAS regardless of the host that committed them.
+*.sh text eol=lf
