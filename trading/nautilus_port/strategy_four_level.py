@@ -346,10 +346,9 @@ class FourLevelStrategy(Strategy):
                     stops[str(o.instrument_id)] = str(tp)
             account = []
             try:
-                venue = next(iter(self._bar_types)).venue if self._bar_types else None
-                acct = self.cache.account_for_venue(venue) if venue else None
-                if acct is not None:
-                    account = [str(v) for v in acct.balances_total().values()]
+                # The IB account is under the "IB" venue, not IDEALPRO — read all accounts.
+                for acct in self.cache.accounts():
+                    account += [str(v) for v in acct.balances_total().values()]
             except Exception:
                 pass
             snapshot = {
