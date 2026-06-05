@@ -110,6 +110,48 @@ def save_json(path, data):
     path.write_text(json.dumps(data, indent=2, default=str))
 
 
+# ── Account Balance ──
+
+_account_summary_subscribed = False
+
+async def subscribe_account_summary_async(ib_client=None):
+    """Subscribe to account summary once at startup.
+    IBKR allows only one active subscription — subsequent calls will get
+    'Maximum number of account summary requests exceeded' error."""
+    global _account_summary_subscribed
+    if not ib_client or not ib_client.isConnected():
+        return False
+    try:
+        await ib_client.reqAccountSummaryAsync()
+        _account_summary_subscribed = True
+        log.info("💰 Account summary subscribed (IBKR)")
+        return True
+    except Exception as e:
+        log.warning(f"💰 Account summary subscribe failed: {e}")
+        return False
+
+def read_account_balance(ib_client=None) -> dict | None:
+    """Read cached account summary — called every tick after subscription."""
+    global _account_summary_subscribed
+    if not _account_summary_subscribed or not ib_client or not ib_client.isConnected():
+        return None
+    try:
+        summary = ib_client.accountSummary()
+        result = {}
+        for av in summary:
+            if av.tag in ('TotalCashValue', 'NetLiquidation', 'UnrealizedPnL', 'BuyingPower'):
+                try:
+                    result[av.tag] = float(av.value)
+                except (ValueError, TypeError):
+                    result[av.tag] = 0.0
+        if result:
+            return result
+        return None
+    except Exception as e:
+        log.debug(f"Read account balance failed: {e}")
+        return None
+
+
 # ── Data Fetch ──
 # yfinance is synchronous — wrapped with timeout via ThreadPoolExecutor
 # IBKR paper has no FX market data subscription, so reqHistoricalData won't work
@@ -1086,6 +1128,9 @@ async def run_daemon_async():
     else:
         old_state['positions'] = {}
 
+    # Subscribe to account summary (one-shot subscription)
+    await subscribe_account_summary_async(ib_client)
+
     tick_count = 0
     signal_tick_count = 0
     current_interval = BASE_INTERVAL
@@ -1290,13 +1335,24 @@ async def run_daemon_async():
                                 log.info(f"🛡️  Stop restored for {pair}: {stop_price}")
 
             # ════════════════════════════════════════════
-            # C. SAVE STATE
+            # C. ACCOUNT BALANCE (every 20 ticks)
+            # ════════════════════════════════════════════
+            account_balance = old_state.get('account_balance', {})
+            if tick_count % 20 == 0:
+                bal = read_account_balance(ib_client)
+                if bal:
+                    account_balance = bal
+                    log.debug(f"💰 Balance: NetLiq={bal.get('NetLiquidation','?')} Cash={bal.get('TotalCashValue','?')}")
+
+            # ════════════════════════════════════════════
+            # D. SAVE STATE
             # ════════════════════════════════════════════
             new_state = {
                 'eur_usd': eur_analysis or {},
                 'carry': carry_analysis,
                 'positions': positions,
                 'current_prices': current_prices,
+                'account_balance': account_balance,
                 'last_tick': ts(),
             }
 

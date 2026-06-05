@@ -99,6 +99,28 @@ lines.append(f'Daemon: {"🟢 Running" if daemon_alive else "🔴 Down"} · IBKR
 if last_error:
     lines.append(f'⚠️ Last error: {last_error[:90]}')
 lines.append('')
+lines.append(f'**💰 Balance**')
+
+bal = state.get('account_balance', {})
+if bal:
+    net_liq = bal.get('NetLiquidation')
+    cash = bal.get('TotalCashValue')
+    upnl = bal.get('UnrealizedPnL')
+    bp = bal.get('BuyingPower')
+
+    if net_liq is not None:
+        lines.append(f'Net Liq: ${net_liq:,.0f}')
+    if cash is not None:
+        lines.append(f'Cash: ${cash:,.0f}')
+    if upnl is not None:
+        pnl_icon = '🟢' if upnl >= 0 else '🔴'
+        lines.append(f'Unrealized PnL: {pnl_icon} ${upnl:+,.0f}')
+    if bp is not None:
+        lines.append(f'Buying Power: ${bp:,.0f}')
+else:
+    lines.append('N/A (IBKR account summary not available)')
+
+lines.append('')
 
 # Positions
 if positions:
