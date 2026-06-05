@@ -94,6 +94,7 @@ class FourLevelStrategy(Strategy):
         self._latest: dict[InstrumentId, dict] = {}          # last signal per pair (for /status)
         self._state_path = os.environ.get("STATE_PATH")      # set in live deploy; unset in backtest
         self._control_path = os.environ.get("CONTROL_PATH")  # switches the Telegram bot writes
+        self._trades_path = os.environ.get("TRADES_PATH")    # append-only trade log for /history
         self._state_interval = int(os.environ.get("STATE_INTERVAL_SECS", "30"))
         self._snap_stop = threading.Event()
         self._snap_thread = None
@@ -294,11 +295,19 @@ class FourLevelStrategy(Strategy):
             f"🛑 Closed {iid} @ {event.avg_px_close} | PnL {event.realized_pnl} "
             f"({event.realized_return:+.2%})"
         )
+        self._append_trade({
+            "type": "close", "pair": str(iid), "exit": str(event.avg_px_close),
+            "pnl": str(event.realized_pnl), "return": f"{event.realized_return:+.2%}",
+        })
 
     # ── notifications (Telegram) ─────────────────────────────────────────
     def on_order_filled(self, event):
         side = "BUY" if event.is_buy else "SELL"
         self._notify(f"✅ Filled {side} {event.last_qty} {event.instrument_id} @ {event.last_px}")
+        self._append_trade({
+            "type": "fill", "side": side, "qty": str(event.last_qty),
+            "pair": str(event.instrument_id), "px": str(event.last_px),
+        })
 
     def on_order_rejected(self, event):
         self.log.warning(f"Order rejected {event.instrument_id}: {event.reason}")
@@ -348,6 +357,18 @@ class FourLevelStrategy(Strategy):
             }
         except Exception:
             return default
+
+    def _append_trade(self, record: dict):
+        """Append a trade event (fill/close) to the trades log for /history.
+        No-op if unset; never raises."""
+        if not self._trades_path:
+            return
+        try:
+            record = {"ts": self.clock.utc_now().isoformat(), **record}
+            with open(self._trades_path, "a") as f:
+                f.write(json.dumps(record, default=str) + "\n")
+        except Exception as exc:
+            self.log.warning(f"trade log append failed: {exc}")
 
     def _write_state(self):
         """Snapshot live state to STATE_PATH for the Telegram bot. No-op if unset; never raises."""

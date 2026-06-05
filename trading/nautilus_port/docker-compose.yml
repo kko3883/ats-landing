@@ -68,6 +68,7 @@ services:
       IBG_PORT: "4004"
       STATE_PATH: /state/state.json      # daemon writes the snapshot the bot reads
       CONTROL_PATH: /state/control.json  # daemon reads the switches the bot writes
+      TRADES_PATH: /state/trades.jsonl   # daemon appends fills/closes for /history
       TZ: Asia/Hong_Kong
     volumes:
       - ats-state:/state
@@ -85,6 +86,7 @@ services:
     environment:
       STATE_PATH: /state/state.json
       CONTROL_PATH: /state/control.json
+      TRADES_PATH: /state/trades.jsonl
       TZ: Asia/Hong_Kong
     volumes:
       - ats-state:/state             # read snapshot + write control.json

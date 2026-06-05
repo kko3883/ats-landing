@@ -22,6 +22,7 @@ TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = str(os.environ["TELEGRAM_CHAT_ID"])
 STATE_PATH = os.environ.get("STATE_PATH", "/state/state.json")
 CONTROL_PATH = os.environ.get("CONTROL_PATH", "/state/control.json")
+TRADES_PATH = os.environ.get("TRADES_PATH", "/state/trades.jsonl")
 PAIRS = {  # normalized user input -> instrument id the daemon uses
     "EURUSD": "EUR/USD.IDEALPRO",
     "AUDJPY": "AUD/JPY.IDEALPRO",
@@ -139,6 +140,31 @@ def fmt_status(s) -> str:
     return "\n".join(lines)
 
 
+def fmt_history(n: int = 12) -> str:
+    try:
+        with open(TRADES_PATH) as f:
+            lines = f.readlines()[-n:]
+    except Exception:
+        return "🧾 No trades yet."
+    if not lines:
+        return "🧾 No trades yet."
+    out = ["🧾 Recent trades:"]
+    for ln in lines:
+        try:
+            t = json.loads(ln)
+        except Exception:
+            continue
+        ts = t.get("ts", "")[:16].replace("T", " ")
+        if t.get("type") == "fill":
+            out.append(f"{ts}  {t.get('side')} {t.get('qty')} {t.get('pair')} @ {t.get('px')}")
+        elif t.get("type") == "close":
+            out.append(
+                f"{ts}  CLOSE {t.get('pair')} @ {t.get('exit')} | "
+                f"PnL {t.get('pnl')} ({t.get('return')})"
+            )
+    return "\n".join(out)
+
+
 def handle(text: str) -> str:
     cmd = text.strip().split()[0].lower().lstrip("/").split("@")[0]
     s = load_state()
@@ -159,6 +185,8 @@ def handle(text: str) -> str:
         if len(parts) < 2:
             return f"Usage: /{cmd} EURUSD"
         return set_pair(parts[1], cmd == "enable")
+    if cmd in ("history", "trades"):
+        return fmt_history()
     if cmd == "help":
         return (
             "Commands:\n"
@@ -166,6 +194,7 @@ def handle(text: str) -> str:
             "/positions — open positions + stops\n"
             "/balance — account balance\n"
             "/signal — current signal per pair\n"
+            "/history — recent fills + closes (with P&L)\n"
             "/pause — halt new entries (keeps managing open positions)\n"
             "/resume — allow new entries again\n"
             "/disable EURUSD — stop entering one pair\n"
