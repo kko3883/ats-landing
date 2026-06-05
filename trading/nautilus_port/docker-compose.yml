@@ -18,6 +18,9 @@ services:
     environment:
       TRADING_MODE: paper            # 4002. Flip to live (4001) only after the paper run.
       READ_ONLY_API: "no"            # "no" = allow order placement
+      # If this username already has a session elsewhere, take it over rather than hang on
+      # the "Existing session detected" dialog (which leaves the gateway unhealthy forever).
+      EXISTING_SESSION_DETECTED_ACTION: primary
       # Daily token-based restart (no credentials needed) — keeps it 24x7.
       AUTO_RESTART_TIME: "11:59 PM"
       # 2FA handling: on a timed-out 2FA, restart and re-prompt rather than die.
