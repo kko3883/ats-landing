@@ -30,7 +30,7 @@ services:
       - "127.0.0.1:4002:4002"        # API (paper)
       - "127.0.0.1:5900:5900"        # VNC (reach via SSH tunnel; see DEPLOY.md)
     volumes:
-      - ./ibgw-settings:/home/ibgateway/tws_settings   # persist IBC/TWS settings across restarts
+      - ibgw-settings:/home/ibgateway/tws_settings   # named volume (Docker-managed; avoids host-path/ACL/ownership issues)
     labels:
       - "autoheal=true"              # match your existing autoheal label if it differs
     healthcheck:
@@ -57,3 +57,6 @@ services:
       TZ: Asia/Hong_Kong
     labels:
       - "autoheal=true"
+
+volumes:
+  ibgw-settings:        # Docker-managed named volume for the gateway's IBC/TWS settings
