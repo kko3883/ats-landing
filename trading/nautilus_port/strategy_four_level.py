@@ -108,8 +108,8 @@ class FourLevelStrategy(Strategy):
             # Auto-update every indicator on each bar of this type
             for ind in (st.sma20, st.sma50, st.ema20, st.ema50, st.rsi, st.atr):
                 self.register_indicator_for_bars(bar_type, ind)
-            # Warm up indicators with history, then stream live
-            self.request_bars(bar_type)
+            # Warm up indicators with ~10 days of 1h history (start is REQUIRED in 1.227), then stream live
+            self.request_bars(bar_type, start=self.clock.utc_now() - timedelta(days=10))
             self.subscribe_bars(bar_type)
             self.log.info(f"Subscribed {bar_type}")
         self._notify("🟢 ATS FX strategy started (paper) — " + ", ".join(str(i) for i in self._bar_types))
