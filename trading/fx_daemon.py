@@ -492,6 +492,8 @@ def check_for_alerts(old_state: dict, new_signals: list[dict]) -> list[dict]:
 _ib = None
 _ib_client_id = 1  # persistent clientId; changed only on reconnect-after-conflict
 TRADE_COOLDOWN = {}
+_pending_exits = set()  # pairs whose close order failed — retried every tick until IBKR confirms
+_close_attempts = {}    # pair -> timestamp, to throttle duplicate close orders
 
 FX_CONTRACT_MAP = {
     'EUR/USD': ('EURUSD', 'EUR.USD'),
@@ -731,9 +733,10 @@ async def place_trade_async(pair: str, signal: str, price: float,
 
 
 async def close_position_async(pair: str, direction: str, size: int, price: float) -> dict:
-    """Close a position using a short-lived IBKR connection (avoids event loop interference)."""
+    """Close a position using a short-lived IBKR connection.
+    Waits up to 10s for fill confirmation. Returns 'pending' if order
+    was submitted but not yet filled (caller should retry later, not clear state)."""
     try:
-        # Use a separate temp connection for order execution
         temp_ib = ib.IB()
         await temp_ib.connectAsync('127.0.0.1', 4002, clientId=random.randint(50, 200))
 
@@ -749,22 +752,45 @@ async def close_position_async(pair: str, direction: str, size: int, price: floa
         order = ib.MarketOrder(action, size)
         order.tif = 'DAY'
         trade = temp_ib.placeOrder(contract, order)
-        await asyncio.sleep(0.5)  # brief wait for fill
 
-        result = {
-            'pair': pair,
-            'action': action,
-            'size': size,
-            'price': price,
-            'reason': f'{direction}_signal_exit',
-            'status': trade.orderStatus.status,
-            'order_id': trade.orderStatus.orderId,
-            'filled': trade.orderStatus.filled,
-            'avg_fill': trade.orderStatus.avgFillPrice,
-            'timestamp': ts(),
-        }
+        # Wait for fill (up to 10s)
+        filled = 0
+        avg_fill = 0.0
+        for _ in range(20):
+            await asyncio.sleep(0.5)
+            st = trade.orderStatus
+            if st.filled > 0:
+                filled = float(st.filled)
+                avg_fill = float(st.avgFillPrice) if st.avgFillPrice else 0.0
+                break
+            # Order rejected or cancelled
+            if st.status in ('Cancelled', 'Inactive', 'ApiCancelled'):
+                break
+
         temp_ib.disconnect()
-        return result
+
+        if filled >= size:
+            return {
+                'pair': pair, 'action': action, 'size': size,
+                'price': avg_fill or price, 'filled': filled,
+                'status': 'Filled', 'reason': f'{direction}_signal_exit',
+                'timestamp': ts(),
+            }
+        elif filled > 0:
+            return {
+                'pair': pair, 'action': action, 'size': size,
+                'price': avg_fill or price, 'filled': filled,
+                'status': 'PartialFill', 'reason': f'{direction}_signal_exit',
+                'timestamp': ts(),
+            }
+        else:
+            return {
+                'pair': pair, 'action': action, 'size': size,
+                'price': price, 'filled': 0, 'avg_fill': 0,
+                'status': 'Pending',
+                'reason': 'order_submitted_not_filled',
+                'timestamp': ts(),
+            }
     except Exception as e:
         return {'error': str(e), 'pair': pair}
 
@@ -802,7 +828,16 @@ async def _update_ibkr_stop_async(pair: str, direction: str, size: int, new_stop
 
 async def _close_and_cancel_async(pair: str, pos: dict, current_price: float,
                                   exits: list, updated_positions: dict, reason: str = ""):
-    """Cancel stop order and close position asynchronously."""
+    """Cancel stop order and close position asynchronously.
+    Only removes position from state if IBKR confirms the close. On failure,
+    adds to _pending_exits for retry on subsequent ticks."""
+    global _pending_exits, _close_attempts
+
+    # Throttle: don't spam close orders — wait 60s between attempts
+    last_attempt = _close_attempts.get(pair, 0)
+    if time.time() - last_attempt < 60:
+        return
+    _close_attempts[pair] = time.time()
     stop_order_id = pos.get('stop_order_id')
     if stop_order_id:
         try:
@@ -813,6 +848,19 @@ async def _close_and_cancel_async(pair: str, pos: dict, current_price: float,
             pass
 
     exit_result = await close_position_async(pair, pos['direction'], pos['size'], current_price)
+
+    # CRITICAL: If IBKR close failed, DON'T clear state — retry later
+    if 'error' in exit_result:
+        _pending_exits.add(pair)
+        log.warning(f"⚠️ IBKR close FAILED for {pair}: {exit_result['error']} — added to retry queue")
+        return  # Keep position in state for retry
+
+    # Order submitted but not filled yet — keep state, order is in IBKR system
+    if exit_result.get('status') == 'Pending':
+        log.info(f"⏳ Close order submitted for {pair} — waiting for fill, keeping state")
+        return
+
+    _pending_exits.discard(pair)
     multiplier = -1 if pos['direction'] == 'SHORT' else 1
     pnl = round(multiplier * (current_price - pos['entry_price']) / pos['entry_price'] * 100, 2)
 
@@ -1177,6 +1225,19 @@ async def run_daemon_async():
             else:
                 exits, stop_updates = [], []
 
+            # ── Retry pending exits (close failed on previous tick) ──
+            if _pending_exits and current_prices:
+                for pair in list(_pending_exits):
+                    pos = positions.get(pair)
+                    if not pos:
+                        _pending_exits.discard(pair)
+                        continue
+                    log.info(f"🔄 Retrying close for {pair} (pending exit)")
+                    await _close_and_cancel_async(
+                        pair, pos, current_prices.get(pair, pos.get('entry_price')),
+                        exits, positions, reason=f"retry_exit"
+                    )
+
             # ── IBKR position sync (every signal tick) ──
             if tick_count % SIGNAL_TICK_EVERY == 1:
                 ibrk_now = await sync_positions_from_ibrk_async()
@@ -1186,6 +1247,20 @@ async def run_daemon_async():
                         if existing and ibrk_p['size'] != existing.get('size', 0):
                             log.info(f"📡 Position size drift fixed: {pair} state={existing.get('size')} → IBKR={ibrk_p['size']}")
                             positions[pair]['size'] = ibrk_p['size']
+                        elif not existing and pair not in _pending_exits:
+                            # IBKR has a position not in state — likely from a failed close
+                            log.warning(f"📡 Orphan position in IBKR: {pair} {ibrk_p['direction']} {ibrk_p['size']} — adding to retry queue")
+                            positions[pair] = {
+                                'direction': ibrk_p['direction'],
+                                'size': ibrk_p['size'],
+                                'entry_price': ibrk_p.get('avgCost', 0),
+                                'stop_price': None, 'stop_order_id': None,
+                                'entries': 1, 'entry_prices': [ibrk_p.get('avgCost', 0)],
+                                'last_entry_time': time.time(),
+                                'highest_price': 0, 'lowest_price': 0,
+                                'entry_time': ts(), 'pair': pair,
+                            }
+                            _pending_exits.add(pair)
 
             # ════════════════════════════════════════════
             # C. SAVE STATE
