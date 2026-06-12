@@ -1,0 +1,31 @@
+# ATS configuration — single source of truth for universes, parameters,
+# thresholds (BRIEF.md section 3: config-driven, no magic numbers in code).
+
+data:
+  dir: data
+  # Earliest bar requested on first ingest. 2005 gives runway for the
+  # Thermometer's 2007-present acceptance timeline (BRIEF.md section 5).
+  start_date: "2005-01-03"
+  # Quality-report thresholds.
+  stale_after_days: 5   # calendar days without a new bar before a series is flagged stale
+  gap_alert_days: 4     # consecutive-row date gap beyond a normal weekend + holiday
+
+sources:
+  fred:
+    series:
+      - BAMLH0A0HYM2   # ICE BofA US High Yield OAS (credit spread)
+      - DTWEXBGS       # Trade-weighted USD index, broad
+  yfinance:
+    # Close is split/dividend-adjusted (research wants total-return series);
+    # raw prices come from the broker at execution time, not yfinance.
+    auto_adjust: true
+    tickers:
+      - ^VIX
+      - ^VIX3M         # NOT ^VXV — that ticker is retired
+      - SPY
+      - QQQ
+      - IWM
+      - SGOV
+      - BIL
+      - GLD
+      - FLOT
