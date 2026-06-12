@@ -13,7 +13,12 @@ data:
 sources:
   fred:
     series:
-      - BAMLH0A0HYM2   # ICE BofA US High Yield OAS (credit spread)
+      # BAA10Y is the long-history credit-stress input (Moody's Baa - 10y UST,
+      # daily back to 1986): covers 2008/2020 for the Thermometer + backtests.
+      - BAA10Y
+      # ICE BofA HY OAS is the purer high-yield measure but FRED now only serves
+      # it from 2023-06 (ICE Data Indices licensing). Kept as a recent secondary.
+      - BAMLH0A0HYM2
       - DTWEXBGS       # Trade-weighted USD index, broad
   yfinance:
     # Close is split/dividend-adjusted (research wants total-return series);

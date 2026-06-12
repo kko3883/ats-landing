@@ -36,7 +36,7 @@ A **net exposure controller** aggregates positions across buckets before order r
 ## 4. Phase 1 — Data layer (`ingest_engine.py`)
 
 Sources, daily bars, free tier:
-- **FRED:** `BAMLH0A0HYM2` (HY credit spread), `DTWEXBGS` (trade-weighted USD).
+- **FRED:** `BAA10Y` (Moody's Baa–10y credit-stress proxy, long history), `BAMLH0A0HYM2` (HY credit spread, recent-only — see decision log 2026-06-12), `DTWEXBGS` (trade-weighted USD).
 - **yfinance:** `^VIX`, **`^VIX3M`** (NOT `^VXV` — that ticker is retired), `SPY`, `QQQ`, `IWM`, `SGOV`, `BIL`, `GLD`, `FLOT`.
 
 Deliverables: fetchers per source, clean Parquet naming (`data/<source>/<ticker>.parquet`), incremental append, a `refresh_all()` entry point, and a data-quality report (gaps, stale series, NaN counts). Acceptance: re-running twice produces zero duplicate rows; all frames UTC.
@@ -142,3 +142,7 @@ Working agreement with the owner: he is a vibe coder on iPad/SSH — keep CLI er
 - **Legacy `trading/` stack stays untouched and running** (watchlist screener, HK/Longbridge tooling, fx daemons). Out of v1 scope; watchlist becomes a Bucket 2 universe-selection candidate after the Gate. New code never depends on macOS keychain — env files only.
 - **Dev platform note:** build machine is Windows; R&D target is Mac, execution target is NAS. All new code platform-agnostic (uv-managed Python, pathlib, env files).
 - **FRED API key pending** — owner registering; FRED fetcher built and mock-tested, exercised live once the key lands in `.env`.
+
+**2026-06-12 (Phase 1 ingest live; FRED key landed):**
+
+- **Credit-spread data gap found and resolved.** FRED now serves the ICE BofA OAS family (`BAMLH0A0HYM2` and siblings) only from 2023-06-12 — a trailing rolling window imposed by ICE Data Indices licensing, confirmed via FRED series metadata (`observation_start`), not a fetcher bug. 795 rows cannot cover the 2008/2020 shock-labeling acceptance (section 5) or back-test Bucket 1 credit rotation (section 6.2). **Decision:** add `BAA10Y` (Moody's seasoned Baa corporate yield minus 10y UST CMT; FRED-native, daily, full history to 1986) as the **primary long-history credit-stress input** for the Thermometer and backtests; **retain `BAMLH0A0HYM2`** as a recent-only secondary (it is the purer high-yield measure once we are live post-2023). TED spread rejected (discontinued 2022 with LIBOR). Owner approved.
