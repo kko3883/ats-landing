@@ -7,3 +7,10 @@ node_modules/
 out/
 .vercel
 .env*.local
+
+# Python (ATS)
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/

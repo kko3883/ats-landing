@@ -1,0 +1,25 @@
+[project]
+name = "ats"
+version = "0.1.0"
+description = "Autonomous Trading System — research-first build per BRIEF.md"
+requires-python = ">=3.12"
+dependencies = [
+    "polars>=1.0",
+    "pyarrow>=16",
+    "yfinance>=0.2.50",
+    "requests>=2.32",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
