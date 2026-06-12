@@ -34,3 +34,51 @@ sources:
       - BIL
       - GLD
       - FLOT
+
+# Phase 2 — Market Thermometer (regime_detector.py, BRIEF.md section 5).
+# Continuous Regime Score in [-100, +100] plus a 4-state flag, with hysteresis.
+thermometer:
+  timeline_start: "2007-01-01"   # acceptance window the owner eyeballs
+  anchor: SPY                    # trading calendar all series are aligned to
+
+  # Volatility score in [0, 100]: how stressed the tape is. Blend of VIX term
+  # structure, SPY realized-vol percentile, and a long-history credit proxy.
+  vol:
+    realized_vol_window: 20
+    percentile_window: 252
+    percentile_min_samples: 60
+    # VIX/VIX3M: <= contango_ratio scores 0 stress, >= backwardation scores 100.
+    contango_ratio: 0.92
+    backwardation_ratio: 1.05
+    credit_series: BAA10Y
+    credit_z_window: 252
+    credit_z_hot: 2.5            # credit z at/above this scores 100 stress
+    weights:                    # must sum to 1.0
+      term_structure: 0.45
+      realized_vol: 0.40
+      credit: 0.15
+
+  # Trend score: sign = direction, magnitude = strength. Both methods built
+  # (BRIEF.md "implement both; research decides"); `method` selects the driver.
+  trend:
+    method: momentum            # momentum | adx
+    assets: [SPY, QQQ]
+    momentum_horizons: [63, 126, 252]
+    momentum_z_window: 252
+    adx_window: 14
+    adx_scale: 25.0             # adx-method only: divides signed ADX before tanh
+    score_scale: 1.2           # divides the trend metric before tanh -> [-100,100]
+    # ADX (avg over assets) at/above this confirms a trend. Below it, only a
+    # strong momentum reading (thresholds.strong_trend) still counts as trend;
+    # otherwise the day is range/chop.
+    adx_range_ceiling: 20.0
+
+  thresholds:
+    bull: 10                    # trending + regime_score >= bull  -> CLEAR_TREND_BULL
+    bear: -10                   # trending + regime_score <= bear  -> CLEAR_TREND_BEAR
+    strong_trend: 50            # |regime_score| >= this counts as trend even if ADX is low
+    shock_vol_score: 70         # vol_score >= this      -> SYSTEMIC_SHOCK (overrides)
+
+  # State transitions need this many consecutive confirming days before the
+  # official state flips (anti-whipsaw, BRIEF.md section 5).
+  hysteresis_days: 5
