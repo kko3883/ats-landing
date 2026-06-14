@@ -1,13 +1,19 @@
 # ATS Strategic Review — June 2026
 
+> **Last updated: 14 June 2026** — Progress update after implementation sprint.
+> See [Prioritized Action Items](#prioritized-action-items) for current status.
+
 ## Executive Summary
 
 The ATS has a **solid foundation** — the 4-stage screening pipeline is institutional-grade, the
 7-indicator system is well-designed with zero redundancy, and the dashboard integration is clean.
-However, the system has **three critical gaps** that prevent it from being a true decision-support
-tool: (1) no regime detector bridging screening → execution, (2) no conflict resolution between
-daily macro signals and hourly technical signals, and (3) static risk sizing instead of
-volatility-adaptive sizing. These are fixable with ~2 days of focused work.
+
+**The three original critical gaps have been resolved:**
+1. ✅ **Regime detector** built — 5-factor classification (VIX, VIX momentum, HYG-TLT, US10Y-US2Y, SPY-QQQ), publishes to Supabase `regime` table, dashboard shows regime banner with activated groups.
+2. ✅ **Conflict resolution** — GO/WATCH/WAIT badges on dashboard cards, aligned/caution/conflict zones, sorted feed.
+3. ✅ **ATR-adaptive sizing** — replacing static percentages with volatility-scaled stop-loss, take-profit, entry zones, and position sizing.
+
+**Remaining work**: Base Yield bucket, performance analytics.
 
 ---
 
@@ -312,41 +318,73 @@ END OF DAY (16:30 HKT)
 
 ---
 
-## Prioritized Action Items
+## Prioritized Action Items — Progress Tracker
+
+> Status legend: ✅ Done &nbsp;&nbsp; 🔶 In Progress &nbsp;&nbsp; ❌ Not Started
 
 ### Immediate (this week)
 
-1. **Build regime detector** (`regime_detector.py`): VIX level + HYG-TLT spread → regime label → Supabase `market_regime` table. Dashboard shows regime banner.
-   - Effort: ~2 hours
+1. ✅ **Build regime detector** (`regime_detector.py`): 5-factor classification (VIX, VIX momentum, HYG-TLT, SPY-QQQ, US10Y-US2Y) → Supabase `regime` table. Dashboard shows regime banner.
+   - Effort: ~3 hours (actual) — initially 4-factor, upgraded to 5-factor on 14 June
    - Impact: Unlocks strategy gating, gives daily direction
 
-2. **Add conflict resolution to dashboard**: Aligned/Caution/Conflict badges per card based on screener + indicator agreement.
+2. ✅ **Add conflict resolution to dashboard**: Aligned/Caution/Conflict badges per card based on screener + indicator agreement. GO/WATCH/WAIT with color-coded borders and sorted feed.
    - Effort: ~1 hour of dashboard JS
    - Impact: Biggest UX improvement, answers "what do I do now?"
 
-3. **Add US daily screener cron job**: Same pattern as HK.
-   - Effort: 5 minutes
-   - Impact: US signals stay current automatically
+3. ✅ **Add US daily screener cron job**: Created `daily_cron.sh` with four modes (us/hk/all). Crontab file at `trading/ats.crontab` ready for manual install (`crontab ats.crontab` — macOS privacy requires manual approval).
+   - 08:00 HKT: US screener (`daily_cron.sh us`)
+   - 09:00 HKT: Regime detector + both screeners + portfolio sync (`daily_cron.sh all`)
+   - Logs to `~/.hermes/trading/logs/daily_cron.log`
+   - Effort: 10 minutes
+   - Impact: US and HK signals + regime + portfolio all automatically updated every weekday
 
 ### Short-term (next 2 weeks)
 
-4. **ATR-adaptive stop-loss and position sizing**: Replace hardcoded percentages with ATR-based calcs. Surface entry zones on dashboard.
+4. ✅ **ATR-adaptive stop-loss and position sizing**: Replaced hardcoded percentages with ATR-based calcs. Entry zones, stop-loss, take-profit, risk/reward, and suggested size all surfaced as expandable entry cards on dashboard.
    - Effort: ~4 hours
+   - Files: `indicators/calculate.py` (v2), `pages/dashboard/index.js` (EntryCard component), `supabase/migrations/20260613000000_add_atr_and_bb.sql`
    - Impact: "Single highest-ROI improvement" per the trading skill
 
-5. **Add HYG-TLT and US10Y-US2Y to macro factors**: Enhances beta estimation and regime detection.
-   - Effort: ~2 hours
+5. ✅ **Add HYG-TLT and US10Y-US2Y to macro factors**: Both systems updated.
+   - **Regime detector**: 5-factor classification now uses yield curve inversion → risk_off gating. `fetch_yield_curve()` added.
+   - **Screener**: Multi-factor OLS regression expanded from 2-factor (VIX+DXY) to up to 4-factor (VIX + DXY + HYG/TLT credit + 10Y-3M yield curve). Graceful degradation if data unavailable.
+   - Files: `config.py`, `regime_detector.py`, `macro_betas.py`, `data_source.py`, `strategies/registry.py`
+   - Effort: ~3 hours (actual)
    - Impact: Better regime classification, better HK stock selection
 
-6. **Portfolio position tracking**: Simple positions table, daily sync from Longbridge or manual input.
-   - Effort: ~3 hours
-   - Impact: Prevents signal duplication, enables P&L tracking
+6. ✅ **Portfolio position tracking**: Full position table with cost basis, P&L, VIX zone, and allocation %. Dashboard shows live positions panel with concentration gauge. Signal dedup (HELD badge) flags already-held stocks.
+   - Migration: `supabase/migrations/20260614000000_create_portfolio.sql`
+   - Sync: `trading/regime/sync_positions.py` v2 — Longbridge → Supabase with VIX zone lookup from screener
+   - Dashboard: Portfolio panel (total value, P&L, per-position table, VIX zone concentration gauge)
+   - Dedup: Signal cards show blue HELD badge + reduced opacity for existing positions
+   - Effort: ~3 hours (actual)
+   - Impact: System knows your holdings, prevents duplicate signals, shows concentration risk
 
 ### Medium-term (next month)
 
-7. **Base Yield bucket**: SPY overnight gap strategy (mechanical, validated by 30+ years of data)
-8. **Signal lifecycle management**: pending → executed → closed → expired states
-9. **Performance analytics**: Win rate by strategy, Sharpe by bucket, drawdown tracking
+7. ❌ **Base Yield bucket**: SPY overnight gap strategy (mechanical, validated by 30+ years of data)
+8. ✅ **Signal lifecycle management**: `status` column added to signals table (pending/executed/closed/expired). New signals published as 'pending'. Auto-expire script marks pending signals >5 trading days as 'expired'. Dashboard only shows pending signals.
+   - Migration: `supabase/migrations/20260614000001_add_signal_lifecycle.sql`
+   - Writer: `trading/supabase_writer.py` — sets `status='pending'` on all new signals
+   - Expiry: `trading/regime/expire_signals.py` — auto-expires signals >5 trading days
+   - Cron: Added to `daily_cron.sh` (runs after portfolio sync)
+   - Dashboard: Signals fetch filtered to `status=pending OR status IS NULL`
+   - Effort: ~2 hours (actual)
+   - Impact: Signals table self-cleans, dashboard shows only actionable items
+
+9. ❌ **Performance analytics**: Win rate by strategy, Sharpe by bucket, drawdown tracking
+
+---
+
+### Progress Summary (14 June 2026)
+
+| Priority | Total Items | Done | Remaining |
+|----------|:-----------:|:----:|:---------:|
+| Immediate | 3 | 3 | 0 |
+| Short-term | 3 | 3 | 0 |
+| Medium-term | 3 | 1 | 2 (Base Yield, Analytics) |
+| **Total** | **9** | **7** | **2** |
 
 ---
 

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Indicator calculator — 7 independent indicators, no redundancy.
 
@@ -9,6 +10,10 @@ Each uses different math and measures a different dimension:
   5. MFI(14)     — Volume conviction (money flow ratio)
   6. OBV slope   — Accumulation (cumulative volume trend)
   7. Bollinger %B — Volatility extension (SD band position)
+
+v2: ATR-adaptive stop-loss / take-profit / position sizing (STRATEGIC_REVIEW item 5).
+    Pullback strategies → tighter (1.5x ATR stop, 3.0x TP)
+    Breakout/trending    → wider  (2.5x ATR stop, 4.5x TP)
 
 Aggregate: weighted vote → Strong Buy / Buy / Hold / Sell / Strong Sell
 """
@@ -29,11 +34,9 @@ TRADING_DIR = Path.home() / ".hermes" / "trading"
 PROJECT_REF = "nwatzlrmoefluymhqgwi"
 REST_URL = f"https://{PROJECT_REF}.supabase.co/rest/v1"
 
-# Bar size
-BAR_SIZE = "1h"       # Longbridge format: 1m 5m 15m 30m 1h day week
-MIN_BARS = 60  # Need enough data for all indicators (MACD needs ~33 + buffer)
+BAR_SIZE = "1h"
+MIN_BARS = 60
 
-# Sign colours for dashboard
 SIGN_COLOURS = {
     "strong_buy": {"text": "text-emerald-300", "bg": "bg-emerald-900/40", "border": "border-emerald-500"},
     "buy": {"text": "text-emerald-400", "bg": "bg-emerald-900/20", "border": "border-emerald-700"},
@@ -41,6 +44,10 @@ SIGN_COLOURS = {
     "sell": {"text": "text-red-400", "bg": "bg-red-900/20", "border": "border-red-700"},
     "strong_sell": {"text": "text-red-300", "bg": "bg-red-900/40", "border": "border-red-500"},
 }
+
+# Default portfolio for sizing
+DEFAULT_PORTFOLIO = 60_000    # account size in base currency
+RISK_PER_TRADE = 0.01         # 1% risk per trade
 
 
 # ── Keychain helper ───────────────────────────────────────────────────────
@@ -66,10 +73,6 @@ def _supabase_headers():
 # ── Data: Fetch 60min OHLCV from Longbridge ───────────────────────────────
 
 def fetch_60m_bars(symbols: list[str]) -> dict[str, pd.DataFrame]:
-    """Fetch 60min bars for a list of symbols via Longbridge CLI.
-
-    Returns {symbol: DataFrame with columns [open, high, low, close, volume]}.
-    """
     result = {}
     for sym in symbols:
         try:
@@ -104,10 +107,8 @@ def fetch_60m_bars(symbols: list[str]) -> dict[str, pd.DataFrame]:
 
 
 # ── Individual indicator functions ────────────────────────────────────────
-# Each returns a dict: {value: float, signal: 'buy'|'sell'|'hold'}
 
 def compute_macd(close: pd.Series) -> tuple[float, str]:
-    """MACD(12,26,9) — Trend direction."""
     ema12 = close.ewm(span=12, adjust=False).mean()
     ema26 = close.ewm(span=26, adjust=False).mean()
     macd_line = ema12 - ema26
@@ -116,20 +117,17 @@ def compute_macd(close: pd.Series) -> tuple[float, str]:
     val = float(hist.iloc[-1])
     prev = float(hist.iloc[-2]) if len(hist) > 1 else 0
     if val > 0 and prev <= 0:
-        sig = "buy"       # Bullish crossover
+        return val, "buy"
     elif val < 0 and prev >= 0:
-        sig = "sell"      # Bearish crossover
+        return val, "sell"
     elif val > 0:
-        sig = "buy"       # Positive momentum
+        return val, "buy"
     elif val < 0:
-        sig = "sell"      # Negative momentum
-    else:
-        sig = "hold"
-    return val, sig
+        return val, "sell"
+    return val, "hold"
 
 
 def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> tuple[float, str]:
-    """ADX(14) — Trend strength (≥25 trending, <20 ranging)."""
     plus_dm = high.diff()
     minus_dm = low.diff()
     tr = pd.concat([
@@ -143,17 +141,10 @@ def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
     dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1e-10)
     adx = dx.rolling(period).mean()
     val = float(adx.iloc[-1])
-    if val >= 25:
-        sig = "buy"   # Trending — can trade direction
-    elif val <= 20:
-        sig = "hold"  # Ranging — no strong trend
-    else:
-        sig = "hold"
-    return val, sig
+    return val, "buy" if val >= 25 else "hold"
 
 
 def compute_rsi(close: pd.Series, period: int = 14) -> tuple[float, str]:
-    """RSI(14) — Momentum speed. <30 oversold (buy), >70 overbought (sell)."""
     delta = close.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -162,36 +153,27 @@ def compute_rsi(close: pd.Series, period: int = 14) -> tuple[float, str]:
     rs = avg_g / avg_l.replace(0, 1e-10)
     rsi = 100 - (100 / (1 + rs))
     val = float(rsi.iloc[-1])
-    if val < 30:
-        sig = "buy"
-    elif val > 70:
-        sig = "sell"
-    else:
-        sig = "hold"
-    return val, sig
+    if val < 30: return val, "buy"
+    if val > 70: return val, "sell"
+    return val, "hold"
 
 
 def compute_stochastic(high: pd.Series, low: pd.Series, close: pd.Series,
                        k_period: int = 14, d_period: int = 3) -> tuple[float, float, str]:
-    """Stochastic %K(%D) — Range position. <20 oversold, >80 overbought."""
     low_k = low.rolling(k_period).min()
     high_k = high.rolling(k_period).max()
     k = 100 * (close - low_k) / (high_k - low_k).replace(0, 1e-10)
     d = k.rolling(d_period).mean()
     val_k = float(k.iloc[-1])
     val_d = float(d.iloc[-1]) if len(d) > 0 else val_k
-    if val_k < 20:
-        sig = "buy"
-    elif val_k > 80:
-        sig = "sell"
-    else:
-        sig = "hold"
+    sig = "hold"
+    if val_k < 20: sig = "buy"
+    elif val_k > 80: sig = "sell"
     return val_k, val_d, sig
 
 
 def compute_mfi(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series,
                 period: int = 14) -> tuple[float, str]:
-    """MFI(14) — Volume-weighted RSI. <20 oversold, >80 overbought."""
     typical = (high + low + close) / 3
     raw = typical * volume
     flow = raw.diff()
@@ -200,17 +182,12 @@ def compute_mfi(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Se
     ratio = pos / neg.replace(0, 1e-10)
     mfi = 100 - (100 / (1 + ratio))
     val = float(mfi.iloc[-1])
-    if val < 20:
-        sig = "buy"
-    elif val > 80:
-        sig = "sell"
-    else:
-        sig = "hold"
-    return val, sig
+    if val < 20: return val, "buy"
+    if val > 80: return val, "sell"
+    return val, "hold"
 
 
 def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> float:
-    """ATR(14) — Average True Range (volatility magnitude)."""
     tr = pd.concat([
         high - low,
         (high - close.shift(1)).abs(),
@@ -220,80 +197,55 @@ def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
 
 
 def compute_obv_slope(close: pd.Series, volume: pd.Series, period: int = 14) -> tuple[float, str]:
-    """OBV slope over N periods — accumulation/distribution."""
     obv = (volume * (close.diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0)))).cumsum()
     if len(obv) < period:
         return 0.0, "hold"
     y = obv.iloc[-period:].values.astype(float)
     x = np.arange(len(y))
     slope = np.polyfit(x, y, 1)[0]
-    if slope > 0:
-        sig = "buy"
-    elif slope < 0:
-        sig = "sell"
-    else:
-        sig = "hold"
+    sig = "buy" if slope > 0 else ("sell" if slope < 0 else "hold")
     return float(slope), sig
 
 
 def compute_bb_percent_b(close: pd.Series, period: int = 20, std: float = 2.0) -> tuple[float, str]:
-    """Bollinger %B — position within bands. <0 (below lower) buy, >1 (above upper) sell."""
     mid = close.rolling(period).mean()
     sigma = close.rolling(period).std()
     upper = mid + sigma * std
     lower = mid - sigma * std
     bb = (close - lower) / (upper - lower).replace(0, 1e-10)
     val = float(bb.iloc[-1])
-    if val < 0:
-        sig = "buy"
-    elif val > 1:
-        sig = "sell"
-    else:
-        sig = "hold"
-    return val, sig
+    if val < 0: return val, "buy"
+    if val > 1: return val, "sell"
+    return val, "hold"
 
 
 # ── Aggregation ───────────────────────────────────────────────────────────
 
 def compute_composite(results: dict) -> tuple[int, str]:
-    """Weighted vote from all indicators. Returns (score, label)."""
     weights = {
-        "macd": 2,      # Trend direction (primary)
-        "adx": 1,       # Trend strength (confirming)
-        "rsi": 2,       # Momentum (primary)
-        "stoch": 1,     # Range position (confirming)
-        "mfi": 2,       # Volume momentum (primary)
-        "obv": 1,       # Accumulation trend (confirming)
-        "bb": 1,        # Volatility extension (edge case)
+        "macd": 2, "adx": 1, "rsi": 2, "stoch": 1,
+        "mfi": 2, "obv": 1, "bb": 1,
     }
     score = 0
-    max_possible = sum(w for w in weights.values())
+    max_possible = sum(weights.values())
     for key, weight in weights.items():
         sig = results.get(key, {}).get("signal", "hold")
-        if sig == "buy":
-            score += weight
-        elif sig == "sell":
-            score -= weight
-    # Normalize to [-7, +7] scale (max possible = 10, but cap at 7 for readability)
+        if sig == "buy": score += weight
+        elif sig == "sell": score -= weight
     normalized = round(score * 7 / max_possible)
     normalized = max(-7, min(7, normalized))
-    if normalized >= 4:
-        label = "strong_buy"
-    elif normalized >= 1:
-        label = "buy"
-    elif normalized <= -4:
-        label = "strong_sell"
-    elif normalized <= -1:
-        label = "sell"
-    else:
-        label = "hold"
+    if normalized >= 4:      label = "strong_buy"
+    elif normalized >= 1:    label = "buy"
+    elif normalized <= -4:   label = "strong_sell"
+    elif normalized <= -1:   label = "sell"
+    else:                    label = "hold"
     return normalized, label
 
 
 # ── Main calculation for one symbol ───────────────────────────────────────
 
 def calculate_for_symbol(df: pd.DataFrame) -> dict:
-    """Run all 7 indicators on a DataFrame. Returns dict of results."""
+    """Run all 7 indicators + ATR-adaptive entry plan for one symbol."""
     close = df["close"]
     high = df["high"]
     low = df["low"]
@@ -307,13 +259,7 @@ def calculate_for_symbol(df: pd.DataFrame) -> dict:
     obv_val, obv_sig = compute_obv_slope(close, volume)
     bb_val, bb_sig = compute_bb_percent_b(close)
 
-    # ATR + entry/stop
-    atr_val = compute_atr(high, low, close)
-    last_price = float(close.iloc[-1])
-    stop_loss = round(last_price - atr_val * 1.5, 2)
-    take_profit = round(last_price + atr_val * 3.0, 2)
-
-    results = {
+    results_pre = {
         "macd": {"value": round(macd_val, 4), "signal": macd_sig},
         "adx": {"value": round(adx_val, 2), "signal": adx_sig},
         "rsi": {"value": round(rsi_val, 2), "signal": rsi_sig},
@@ -322,20 +268,80 @@ def calculate_for_symbol(df: pd.DataFrame) -> dict:
         "obv": {"value": round(obv_val, 2), "signal": obv_sig},
         "bb": {"value": round(bb_val, 4), "signal": bb_sig},
     }
+    score, label = compute_composite(results_pre)
 
-    score, label = compute_composite(results)
-    results["composite"] = {"score": score, "signal": label}
-    results["atr"] = {"value": round(atr_val, 2)}
-    results["stop_loss"] = {"value": stop_loss}
-    results["take_profit"] = {"value": take_profit}
+    # ── ATR-adaptive entry plan ──
+    atr_val = compute_atr(high, low, close)
+    last_price = float(close.iloc[-1])
+    atr_pct = round(atr_val / last_price * 100, 2) if last_price > 0 else 0
 
-    return results
+    # Strategy type determines stop/TP multipliers
+    is_pullback = (label in ('strong_buy', 'buy') and rsi_val < 50) or (label in ('strong_sell', 'sell') and rsi_val > 50)
+    if is_pullback:
+        stop_mult = 1.5    # tighter — mean reversion should happen fast
+        tp_mult = 3.0
+    elif adx_val >= 25:
+        stop_mult = 2.5    # wider — trends need room to breathe
+        tp_mult = 4.5
+    else:
+        stop_mult = 2.0
+        tp_mult = 3.5
+
+    # Directional stop/TP
+    if label in ('strong_buy', 'buy'):
+        stop_loss = round(last_price - atr_val * stop_mult, 2)
+        take_profit = round(last_price + atr_val * tp_mult, 2)
+        entry_zone_low = round(last_price - atr_val * 0.5, 2)
+        entry_zone_high = round(last_price, 2)
+    elif label in ('strong_sell', 'sell'):
+        stop_loss = round(last_price + atr_val * stop_mult, 2)
+        take_profit = round(last_price - atr_val * tp_mult, 2)
+        entry_zone_low = round(last_price, 2)
+        entry_zone_high = round(last_price + atr_val * 0.5, 2)
+    else:
+        stop_loss = round(last_price - atr_val * 1.5, 2)
+        take_profit = round(last_price + atr_val * 3.0, 2)
+        entry_zone_low = last_price
+        entry_zone_high = last_price
+
+    # Bollinger Bands raw values
+    bb_mid = round(float(close.rolling(20).mean().iloc[-1]), 2)
+    bb_sigma_val = float(close.rolling(20).std().iloc[-1])
+    bb_upper = round(bb_mid + bb_sigma_val * 2.0, 2)
+    bb_lower = round(bb_mid - bb_sigma_val * 2.0, 2)
+
+    # Risk/reward
+    risk = round(abs(stop_loss - last_price), 2)
+    reward = round(abs(take_profit - last_price), 2)
+    rr_ratio = round(reward / risk, 1) if risk > 0 else 0
+
+    # Suggested position size (1% risk per trade)
+    risk_amount = DEFAULT_PORTFOLIO * RISK_PER_TRADE
+    suggested_size = int(risk_amount / risk) if risk > 0 else 0
+
+    return {
+        "macd": results_pre["macd"],
+        "adx": results_pre["adx"],
+        "rsi": results_pre["rsi"],
+        "stoch": results_pre["stoch"],
+        "mfi": results_pre["mfi"],
+        "obv": results_pre["obv"],
+        "bb": results_pre["bb"],
+        "composite": {"score": score, "signal": label},
+        "atr": {"value": round(atr_val, 2), "pct": round(atr_pct, 2)},
+        "stop_loss": {"value": stop_loss, "mult": stop_mult},
+        "take_profit": {"value": take_profit, "mult": tp_mult},
+        "bb_bands": {"upper": bb_upper, "mid": bb_mid, "lower": bb_lower},
+        "entry_zone": {"low": entry_zone_low, "high": entry_zone_high},
+        "risk_reward": {"risk": risk, "reward": reward, "rr": rr_ratio},
+        "suggested_size": suggested_size,
+        "current_price": last_price,
+    }
 
 
 # ── Pub to Supabase ───────────────────────────────────────────────────────
 
 def publish(symbol_rows: list[dict]):
-    """Write indicator results to Supabase indicator_signals table."""
     if not symbol_rows:
         return 0
     headers = _supabase_headers()
@@ -355,17 +361,12 @@ def publish(symbol_rows: list[dict]):
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 def _market_from_symbol(sym: str) -> str:
-    """Infer market from symbol suffix."""
-    if sym.endswith(".HK"):
-        return "hk"
-    elif sym.endswith(".US"):
-        return "us"
+    if sym.endswith(".HK"): return "hk"
+    if sym.endswith(".US"): return "us"
     return "us"
 
 
 def _ticker_name(sym: str, stock_names: dict) -> str:
-    """Lookup human-readable name from stock_names dict."""
-    # Stock names may be keyed by symbol with or without suffix
     return stock_names.get(sym, stock_names.get(sym.replace(".HK", "").replace(".US", ""), ""))
 
 
@@ -375,12 +376,11 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Calculate 7-dimension indicators for tickers")
     parser.add_argument("symbols", nargs="*", help="Symbols to calculate (e.g. AAPL.US 700.HK)")
-    parser.add_argument("--from-signals", action="store_true", help="Calculate for all tickers in signals table")
-    parser.add_argument("--from-watchlist-hk", action="store_true", help="Calculate for HK watchlist tickers")
-    parser.add_argument("--all", action="store_true", help="Combined: signals + HK watchlist")
+    parser.add_argument("--from-signals", action="store_true")
+    parser.add_argument("--from-watchlist-hk", action="store_true")
+    parser.add_argument("--all", action="store_true")
     args = parser.parse_args()
 
-    # Collect symbols
     symbols = list(args.symbols) if args.symbols else []
 
     if args.from_signals or args.all:
@@ -390,9 +390,7 @@ def main():
             for row in resp.json():
                 t = row.get("ticker", "")
                 if t and t not in symbols:
-                    # Add market suffix if missing
-                    if not t.endswith((".US", ".HK")):
-                        t = f"{t}.US"
+                    if not t.endswith((".US", ".HK")): t = f"{t}.US"
                     symbols.append(t)
 
     if args.from_watchlist_hk or args.all:
@@ -405,14 +403,12 @@ def main():
                     symbols.append(s)
 
     if not symbols:
-        print("No symbols to calculate. Provide symbols or use --from-signals / --from-watchlist-hk")
+        print("No symbols to calculate.")
         sys.exit(1)
 
-    # Deduplicate
     symbols = list(dict.fromkeys(symbols))
     print(f"Calculating indicators for {len(symbols)} symbols on {BAR_SIZE} bars...")
 
-    # Load stock names for reference
     stock_names = {}
     try:
         with open(TRADING_DIR / "watchlist" / "hk_stock_names.json") as f:
@@ -420,15 +416,12 @@ def main():
     except (FileNotFoundError, json.JSONDecodeError):
         pass
 
-    # Fetch data
     bars = fetch_60m_bars(symbols)
     if not bars:
         print("No data fetched. Check your Longbridge connection.")
         sys.exit(1)
-
     print(f"  Data fetched for {len(bars)} symbols")
 
-    # Calculate
     rows = []
     for sym, df in bars.items():
         try:
@@ -460,10 +453,18 @@ def main():
                 "atr_value": results["atr"]["value"],
                 "stop_loss": results["stop_loss"]["value"],
                 "take_profit": results["take_profit"]["value"],
+                "bb_upper": results["bb_bands"]["upper"],
+                "bb_lower": results["bb_bands"]["lower"],
+                "bb_mid": results["bb_bands"]["mid"],
+                "current_price": results["current_price"],
+                "entry_zone_low": results["entry_zone"]["low"],
+                "entry_zone_high": results["entry_zone"]["high"],
+                "risk_reward": results["risk_reward"]["rr"],
+                "suggested_size": results["suggested_size"],
                 "ticker_name": name,
             })
-            sig = results["composite"]["signal"]
-            print(f"  {sym:20s} → {sig:>12s} (score: {results['composite']['score']:+d})")
+            rrr = f" R:R=1:{results['risk_reward']['rr']}" if results['risk_reward']['rr'] > 0 else ""
+            print(f"  {sym:20s} → {results['composite']['signal']:>12s} (score:{results['composite']['score']:+d}) ATR:{results['atr']['pct']}% sz:{results['suggested_size']}{rrr}")
         except Exception as e:
             print(f"  ⚠ {sym}: calculation error — {e}")
 
@@ -471,11 +472,8 @@ def main():
         print("No results to publish.")
         return
 
-    # Publish to Supabase
     n = publish(rows)
-    print(f"Done. {n} indicator rows written for {len(set(r['ticker'] for r in rows))} symbols.")
-    print()
-    print("Dashboard will show these on the next page load.")
+    print(f"Done. {n} indicator rows for {len(bars)} symbols.")
 
 
 if __name__ == "__main__":

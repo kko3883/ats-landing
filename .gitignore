@@ -7,3 +7,6 @@ node_modules/
 out/
 .vercel
 .env*.local
+
+# Supabase credentials — DO NOT COMMIT
+.env.supabase

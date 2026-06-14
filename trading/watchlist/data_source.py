@@ -186,20 +186,21 @@ def extract_macro_series(
     prices: pd.DataFrame,
 ) -> dict[str, pd.Series]:
     """
-    Extract VIX and DXY close prices from the combined price DataFrame.
+    Extract all macro series (VIX, DXY, HYG, TLT, TNX, IRX)
+    from the combined price DataFrame.
 
-    Returns {'^VIX': Series, 'DX-Y.NYB': Series}.
+    Returns {label: Series, ...} where label comes from MACRO_LABELS.
     """
     if prices.empty:
         return {}
 
     if not isinstance(prices.columns, pd.MultiIndex):
-        # Cannot determine ticker structure — look for VIX/DXY in column names
+        # Cannot determine ticker structure — look for macro syms in column names
         result = {}
         for sym in MACRO_SYMBOLS:
             col_label = MACRO_LABELS.get(sym, sym)
             if sym in prices.columns:
-                result[col_label] = prices[sym]
+                result[col_label] = prices[sym].dropna()
         return result
 
     # MultiIndex: level_names = ['Ticker', 'Price'] or ['Price', 'Ticker']
@@ -213,10 +214,13 @@ def extract_macro_series(
 
     result = {}
     for sym in MACRO_SYMBOLS:
+        label = MACRO_LABELS.get(sym, sym)
         try:
             close = prices.xs("Close", axis=1, level=price_level)
             if sym in close.columns:
-                result[MACRO_LABELS.get(sym, sym)] = close[sym].dropna()
+                series = close[sym].dropna()
+                if len(series) > 0:
+                    result[label] = series
         except KeyError:
             continue
 

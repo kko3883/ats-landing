@@ -1,0 +1,8 @@
+# ATS Daily Cron — install with: crontab /Users/kelvinko/dev/ats-landing/trading/ats.crontab
+# Verify with: crontab -l
+
+# 08:00 HKT = US screener (8pm ET previous day, post-market data available)
+0 8 * * 1-5 /bin/bash /Users/kelvinko/dev/ats-landing/trading/daily_cron.sh us
+
+# 09:00 HKT = Regime detector + HK screener + US screener + Portfolio sync
+0 9 * * 1-5 /bin/bash /Users/kelvinko/dev/ats-landing/trading/daily_cron.sh all
