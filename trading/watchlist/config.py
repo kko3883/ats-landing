@@ -3,8 +3,8 @@ Market configurations and macro factor settings for the 4-stage watchlist pipeli
 
 The pipeline:
   1. Liquidity guardrails (price, volume)
-  2. Macro factor betas (VIX, DXY) via rolling regression
-  3. Cross-sectional relative strength within beta groups
+  2. Multi-factor macro betas (VIX, DXY, credit, yield curve) via rolling regression
+  3. Cross-sectional relative strength within VIX-beta groups
   4. Flow/event overlay (earnings, options — deferred for free tier)
 
 For HK: same pipeline structure, but beta interpretation differs.
@@ -17,11 +17,22 @@ HERE = Path(__file__).parent
 
 # ── Macro Factor Symbols ────────────────────────────────────────────────────
 
-MACRO_SYMBOLS = ["^VIX", "DX-Y.NYB"]  # VIX + DXY
+# v2: 5 macro factors (was VIX+DXY only)
+#   ^VIX       — fear gauge / volatility
+#   DX-Y.NYB   — USD strength (DXY index proxy)
+#   HYG        — high-yield credit ETF (credit risk appetite)
+#   TLT        — long-duration Treasury ETF (flight-to-quality)
+#   ^TNX       — 10Y Treasury yield (yield curve numerator)
+#   ^IRX       — 13-week T-bill yield (yield curve denominator, proxy for 2Y)
+MACRO_SYMBOLS = ["^VIX", "DX-Y.NYB", "HYG", "TLT", "^TNX", "^IRX"]
 
 MACRO_LABELS = {
     "^VIX": "vix",
     "DX-Y.NYB": "dxy",
+    "HYG": "hyg",
+    "TLT": "tlt",
+    "^TNX": "tnx",
+    "^IRX": "irx",
 }
 
 # ── Market Definitions ──────────────────────────────────────────────────────

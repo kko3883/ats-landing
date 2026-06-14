@@ -149,7 +149,7 @@ def evaluate_strategy(
             price_axis = 0 if level_names[0] in ("Price", "price") else 1
             try:
                 vol = prices.xs("Volume", axis=1, level=price_axis)
-                macro_syms = {"^VIX", "DX-Y.NYB"}
+                macro_syms = {"^VIX", "DX-Y.NYB", "HYG", "TLT", "^TNX", "^IRX"}
                 stock_cols = [c for c in vol.columns if str(c) not in macro_syms]
                 vol = vol[stock_cols]
                 if vol.columns.duplicated().any():

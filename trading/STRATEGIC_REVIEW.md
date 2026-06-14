@@ -1,13 +1,19 @@
 # ATS Strategic Review — June 2026
 
+> **Last updated: 14 June 2026** — Progress update after implementation sprint.
+> See [Prioritized Action Items](#prioritized-action-items) for current status.
+
 ## Executive Summary
 
 The ATS has a **solid foundation** — the 4-stage screening pipeline is institutional-grade, the
 7-indicator system is well-designed with zero redundancy, and the dashboard integration is clean.
-However, the system has **three critical gaps** that prevent it from being a true decision-support
-tool: (1) no regime detector bridging screening → execution, (2) no conflict resolution between
-daily macro signals and hourly technical signals, and (3) static risk sizing instead of
-volatility-adaptive sizing. These are fixable with ~2 days of focused work.
+
+**The three original critical gaps have been resolved:**
+1. ✅ **Regime detector** built — 5-factor classification (VIX, VIX momentum, HYG-TLT, US10Y-US2Y, SPY-QQQ), publishes to Supabase `regime` table, dashboard shows regime banner with activated groups.
+2. ✅ **Conflict resolution** — GO/WATCH/WAIT badges on dashboard cards, aligned/caution/conflict zones, sorted feed.
+3. ✅ **ATR-adaptive sizing** — replacing static percentages with volatility-scaled stop-loss, take-profit, entry zones, and position sizing.
+
+**Remaining work** is primarily operational: US cron, portfolio tracking, Base Yield bucket, signal lifecycle.
 
 ---
 
@@ -312,41 +318,58 @@ END OF DAY (16:30 HKT)
 
 ---
 
-## Prioritized Action Items
+## Prioritized Action Items — Progress Tracker
+
+> Status legend: ✅ Done &nbsp;&nbsp; 🔶 In Progress &nbsp;&nbsp; ❌ Not Started
 
 ### Immediate (this week)
 
-1. **Build regime detector** (`regime_detector.py`): VIX level + HYG-TLT spread → regime label → Supabase `market_regime` table. Dashboard shows regime banner.
-   - Effort: ~2 hours
+1. ✅ **Build regime detector** (`regime_detector.py`): 5-factor classification (VIX, VIX momentum, HYG-TLT, SPY-QQQ, US10Y-US2Y) → Supabase `regime` table. Dashboard shows regime banner.
+   - Effort: ~3 hours (actual) — initially 4-factor, upgraded to 5-factor on 14 June
    - Impact: Unlocks strategy gating, gives daily direction
 
-2. **Add conflict resolution to dashboard**: Aligned/Caution/Conflict badges per card based on screener + indicator agreement.
+2. ✅ **Add conflict resolution to dashboard**: Aligned/Caution/Conflict badges per card based on screener + indicator agreement. GO/WATCH/WAIT with color-coded borders and sorted feed.
    - Effort: ~1 hour of dashboard JS
    - Impact: Biggest UX improvement, answers "what do I do now?"
 
-3. **Add US daily screener cron job**: Same pattern as HK.
+3. ❌ **Add US daily screener cron job**: Same pattern as HK.
    - Effort: 5 minutes
    - Impact: US signals stay current automatically
 
 ### Short-term (next 2 weeks)
 
-4. **ATR-adaptive stop-loss and position sizing**: Replace hardcoded percentages with ATR-based calcs. Surface entry zones on dashboard.
+4. ✅ **ATR-adaptive stop-loss and position sizing**: Replaced hardcoded percentages with ATR-based calcs. Entry zones, stop-loss, take-profit, risk/reward, and suggested size all surfaced as expandable entry cards on dashboard.
    - Effort: ~4 hours
+   - Files: `indicators/calculate.py` (v2), `pages/dashboard/index.js` (EntryCard component), `supabase/migrations/20260613000000_add_atr_and_bb.sql`
    - Impact: "Single highest-ROI improvement" per the trading skill
 
-5. **Add HYG-TLT and US10Y-US2Y to macro factors**: Enhances beta estimation and regime detection.
-   - Effort: ~2 hours
+5. ✅ **Add HYG-TLT and US10Y-US2Y to macro factors**: Both systems updated.
+   - **Regime detector**: 5-factor classification now uses yield curve inversion → risk_off gating. `fetch_yield_curve()` added.
+   - **Screener**: Multi-factor OLS regression expanded from 2-factor (VIX+DXY) to up to 4-factor (VIX + DXY + HYG/TLT credit + 10Y-3M yield curve). Graceful degradation if data unavailable.
+   - Files: `config.py`, `regime_detector.py`, `macro_betas.py`, `data_source.py`, `strategies/registry.py`
+   - Effort: ~3 hours (actual)
    - Impact: Better regime classification, better HK stock selection
 
-6. **Portfolio position tracking**: Simple positions table, daily sync from Longbridge or manual input.
+6. ❌ **Portfolio position tracking**: Simple positions table, daily sync from Longbridge or manual input.
    - Effort: ~3 hours
    - Impact: Prevents signal duplication, enables P&L tracking
 
 ### Medium-term (next month)
 
-7. **Base Yield bucket**: SPY overnight gap strategy (mechanical, validated by 30+ years of data)
-8. **Signal lifecycle management**: pending → executed → closed → expired states
-9. **Performance analytics**: Win rate by strategy, Sharpe by bucket, drawdown tracking
+7. ❌ **Base Yield bucket**: SPY overnight gap strategy (mechanical, validated by 30+ years of data)
+8. ❌ **Signal lifecycle management**: pending → executed → closed → expired states
+9. ❌ **Performance analytics**: Win rate by strategy, Sharpe by bucket, drawdown tracking
+
+---
+
+### Progress Summary (14 June 2026)
+
+| Priority | Total Items | Done | Remaining |
+|----------|:-----------:|:----:|:---------:|
+| Immediate | 3 | 2 | 1 (US cron) |
+| Short-term | 3 | 2 | 1 (portfolio tracking) |
+| Medium-term | 3 | 0 | 3 |
+| **Total** | **9** | **4** | **5** |
 
 ---
 
