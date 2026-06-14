@@ -109,6 +109,8 @@ export default function Dashboard() {
   const [bucketCounts, setBucketCounts] = useState({})
   const [lastUpdate, setLastUpdate] = useState(null)
   const [expanded, setExpanded] = useState({})              // which signal cards are expanded
+  const [positions, setPositions] = useState([])            // portfolio positions
+  const [heldTickers, setHeldTickers] = useState(new Set()) // tickers already held (for dedup)
 
   useEffect(() => {
     if (!supabase) {
@@ -169,8 +171,31 @@ export default function Dashboard() {
         }
       })
 
+    // Fetch portfolio positions
+    supabase
+      .from('portfolio')
+      .select('*')
+      .order('id', { ascending: true })
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('Portfolio fetch error:', error)
+          return
+        }
+        if (data && data.length > 0) {
+          setPositions(data)
+          // Build held ticker set for dedup (strip suffixes like .US/.HK)
+          const held = new Set()
+          for (const p of data) {
+            const clean = p.ticker?.replace(/\.(US|HK)$/, '').toUpperCase()
+            if (clean) held.add(clean)
+            if (p.ticker) held.add(p.ticker.toUpperCase())
+          }
+          setHeldTickers(held)
+        }
+      })
+
     // Subscribe to new signals in realtime
-    const channel = supabase
+    const signalChannel = supabase
       .channel('signals')
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'signals' },
@@ -181,7 +206,34 @@ export default function Dashboard() {
       )
       .subscribe()
 
-    return () => { supabase.removeChannel(channel) }
+    // Subscribe to portfolio changes (synced by cron)
+    const portfolioChannel = supabase
+      .channel('portfolio')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'portfolio' },
+        () => {
+          // Refetch on any change
+          supabase.from('portfolio').select('*').order('id', { ascending: true })
+            .then(({ data }) => {
+              if (data) {
+                setPositions(data)
+                const held = new Set()
+                for (const p of data) {
+                  const clean = p.ticker?.replace(/\.(US|HK)$/, '').toUpperCase()
+                  if (clean) held.add(clean)
+                  if (p.ticker) held.add(p.ticker.toUpperCase())
+                }
+                setHeldTickers(held)
+              }
+            })
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(signalChannel)
+      supabase.removeChannel(portfolioChannel)
+    }
   }, [])
 
   // Compute bucket counts
@@ -286,6 +338,103 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* ── Portfolio Section ── */}
+        {positions.length > 0 && (() => {
+          const totalVal = positions.reduce((sum, p) => sum + (p.market_value || 0), 0)
+          const totalPnl = positions.reduce((sum, p) => sum + (p.unrealized_pnl || 0), 0)
+
+          // VIX zone concentration
+          const zoneVal = {}
+          for (const p of positions) {
+            const z = p.vix_zone || 'unknown'
+            zoneVal[z] = (zoneVal[z] || 0) + (p.market_value || 0)
+          }
+
+          return (
+            <div className="mb-8 rounded-xl border border-market-800/40 bg-market-900/30 p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold text-market-300 uppercase tracking-wider">
+                  Portfolio ({positions.length} positions)
+                </h2>
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="text-market-400">
+                    Total: <span className="text-white font-mono">${totalVal.toLocaleString()}</span>
+                  </span>
+                  <span className={totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}>
+                    P&L: <span className="font-mono">${totalPnl.toLocaleString(undefined, { signDisplay: 'always' })}</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Positions table */}
+              <div className="overflow-x-auto mb-3">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-market-500 border-b border-market-800/30">
+                      <th className="text-left py-1.5 pr-3">Ticker</th>
+                      <th className="text-right py-1.5 px-3">Qty</th>
+                      <th className="text-right py-1.5 px-3">Value</th>
+                      <th className="text-right py-1.5 px-3">Alloc</th>
+                      <th className="text-right py-1.5 px-3">P&L</th>
+                      <th className="text-left py-1.5 pl-3">Zone</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positions.map(p => (
+                      <tr key={p.id} className="border-b border-market-800/20 hover:bg-market-800/20 transition-colors">
+                        <td className="py-2 pr-3 font-mono text-white">{p.ticker}</td>
+                        <td className="py-2 px-3 text-right font-mono text-market-300">{p.quantity}</td>
+                        <td className="py-2 px-3 text-right font-mono text-market-300">
+                          ${(p.market_value || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-market-400">
+                          {p.allocation_pct != null ? `${p.allocation_pct}%` : '—'}
+                        </td>
+                        <td className={`py-2 px-3 text-right font-mono ${(p.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {p.unrealized_pnl != null ? `$${p.unrealized_pnl.toLocaleString(undefined, { signDisplay: 'always' })}` : '—'}
+                        </td>
+                        <td className="py-2 pl-3">
+                          {p.vix_zone ? (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-market-800/50 text-market-400">
+                              {p.vix_zone.replace(/_/g, ' ')}
+                            </span>
+                          ) : (
+                            <span className="text-market-600">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Concentration gauge */}
+              <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-market-800/30">
+                <span className="text-[10px] text-market-500 uppercase tracking-wider">VIX Zone Exposure:</span>
+                {Object.entries(zoneVal)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([zone, val]) => {
+                    const pct = totalVal > 0 ? (val / totalVal * 100) : 0
+                    const isWarn = pct > 40
+                    return (
+                      <span
+                        key={zone}
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${
+                          isWarn
+                            ? 'bg-red-900/40 text-red-300 border border-red-500/40'
+                            : 'bg-market-800/50 text-market-300'
+                        }`}
+                        title={isWarn ? `⚠ Over-concentrated: ${pct.toFixed(0)}% in ${zone}` : undefined}
+                      >
+                        {zone.replace(/_/g, ' ')} {pct.toFixed(0)}%{isWarn ? ' ⚠' : ''}
+                      </span>
+                    )
+                  })}
+              </div>
+            </div>
+          )
+        })()}
+
         {/* Loading state */}
         {loading && (
           <div className="text-center py-12">
@@ -323,14 +472,23 @@ export default function Dashboard() {
                 const detail = indicatorDetail[s.ticker]
                 const isExpanded = expanded[s.id]
 
+                // Check if already held (dedup)
+                const cleanTicker = s.ticker?.replace(/\.(US|HK)$/, '').toUpperCase()
+                const isHeld = (cleanTicker && heldTickers.has(cleanTicker)) || heldTickers.has(s.ticker?.toUpperCase())
+
                 return (
                   <div key={s.id}>
                     <div
                       onClick={() => toggleExpand(s.id)}
-                      className={`flex items-center justify-between px-4 py-3 rounded-xl border ${a.border} ${a.bg || 'bg-market-900/30'} hover:bg-market-800/30 transition-colors cursor-pointer`}
+                      className={`flex items-center justify-between px-4 py-3 rounded-xl border ${a.border} ${a.bg || 'bg-market-900/30'} hover:bg-market-800/30 transition-colors cursor-pointer ${isHeld ? 'opacity-60' : ''}`}
                     >
                       <div className="flex items-center gap-4">
                         <span className="text-sm font-mono font-semibold text-white w-16">{s.ticker}</span>
+                        {isHeld && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-blue-900/30 text-blue-400 border border-blue-500/30" title="Already in portfolio">
+                            HELD
+                          </span>
+                        )}
                         <span className={`text-xs px-2 py-0.5 rounded font-mono ${DIR_COLORS[s.direction] || 'text-market-400'}`}>
                           {s.direction || '—'}
                         </span>

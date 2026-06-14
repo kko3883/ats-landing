@@ -350,9 +350,13 @@ END OF DAY (16:30 HKT)
    - Effort: ~3 hours (actual)
    - Impact: Better regime classification, better HK stock selection
 
-6. ❌ **Portfolio position tracking**: Simple positions table, daily sync from Longbridge or manual input.
-   - Effort: ~3 hours
-   - Impact: Prevents signal duplication, enables P&L tracking
+6. ✅ **Portfolio position tracking**: Full position table with cost basis, P&L, VIX zone, and allocation %. Dashboard shows live positions panel with concentration gauge. Signal dedup (HELD badge) flags already-held stocks.
+   - Migration: `supabase/migrations/20260614000000_create_portfolio.sql`
+   - Sync: `trading/regime/sync_positions.py` v2 — Longbridge → Supabase with VIX zone lookup from screener
+   - Dashboard: Portfolio panel (total value, P&L, per-position table, VIX zone concentration gauge)
+   - Dedup: Signal cards show blue HELD badge + reduced opacity for existing positions
+   - Effort: ~3 hours (actual)
+   - Impact: System knows your holdings, prevents duplicate signals, shows concentration risk
 
 ### Medium-term (next month)
 
@@ -367,9 +371,9 @@ END OF DAY (16:30 HKT)
 | Priority | Total Items | Done | Remaining |
 |----------|:-----------:|:----:|:---------:|
 | Immediate | 3 | 2 | 1 (US cron) |
-| Short-term | 3 | 2 | 1 (portfolio tracking) |
+| Short-term | 3 | 3 | 0 |
 | Medium-term | 3 | 0 | 3 |
-| **Total** | **9** | **4** | **5** |
+| **Total** | **9** | **5** | **4** |
 
 ---
 
