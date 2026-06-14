@@ -321,19 +321,18 @@ if __name__ == "__main__":
     elif cmd == "order":
         action = sys.argv[2] if len(sys.argv) > 2 else "list"
         if action == "submit":
-            sym = sys.argv[3]
-            side = sys.argv[4]
-            qty = int(sys.argv[5])
-            price = float(sys.argv[6]) if len(sys.argv) > 6 else None
-            result = place_order(sym, side, "limit" if price else "market", qty, price)
-            print(json.dumps(result, indent=2, default=str))
+            # ⛔ DISABLED — Longbridge has no paper account. Uncomment when ready.
+            print("⛔ Order submission DISABLED. Longbridge has no paper account.")
+            print("   Uncomment the submit/cancel blocks in longbridge_executor.py to enable.")
+            sys.exit(1)
         elif action == "list":
             data = get_orders()
             print(json.dumps(data, indent=2, default=str))
         elif action == "cancel":
-            oid = sys.argv[3]
-            result = cancel_order(oid)
-            print(json.dumps(result, indent=2, default=str))
+            # ⛔ DISABLED — Longbridge has no paper account. Uncomment when ready.
+            print("⛔ Order cancellation DISABLED. Longbridge has no paper account.")
+            print("   Uncomment the submit/cancel blocks in longbridge_executor.py to enable.")
+            sys.exit(1)
 
     elif cmd == "test":
         # Quick test: fetch quotes for watchlist symbols
