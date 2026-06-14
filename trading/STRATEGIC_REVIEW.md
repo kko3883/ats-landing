@@ -13,7 +13,7 @@ The ATS has a **solid foundation** — the 4-stage screening pipeline is institu
 2. ✅ **Conflict resolution** — GO/WATCH/WAIT badges on dashboard cards, aligned/caution/conflict zones, sorted feed.
 3. ✅ **ATR-adaptive sizing** — replacing static percentages with volatility-scaled stop-loss, take-profit, entry zones, and position sizing.
 
-**Remaining work** is primarily operational: US cron, portfolio tracking, Base Yield bucket, signal lifecycle.
+**Remaining work**: Base Yield bucket, performance analytics.
 
 ---
 
@@ -364,7 +364,15 @@ END OF DAY (16:30 HKT)
 ### Medium-term (next month)
 
 7. ❌ **Base Yield bucket**: SPY overnight gap strategy (mechanical, validated by 30+ years of data)
-8. ❌ **Signal lifecycle management**: pending → executed → closed → expired states
+8. ✅ **Signal lifecycle management**: `status` column added to signals table (pending/executed/closed/expired). New signals published as 'pending'. Auto-expire script marks pending signals >5 trading days as 'expired'. Dashboard only shows pending signals.
+   - Migration: `supabase/migrations/20260614000001_add_signal_lifecycle.sql`
+   - Writer: `trading/supabase_writer.py` — sets `status='pending'` on all new signals
+   - Expiry: `trading/regime/expire_signals.py` — auto-expires signals >5 trading days
+   - Cron: Added to `daily_cron.sh` (runs after portfolio sync)
+   - Dashboard: Signals fetch filtered to `status=pending OR status IS NULL`
+   - Effort: ~2 hours (actual)
+   - Impact: Signals table self-cleans, dashboard shows only actionable items
+
 9. ❌ **Performance analytics**: Win rate by strategy, Sharpe by bucket, drawdown tracking
 
 ---
@@ -375,8 +383,8 @@ END OF DAY (16:30 HKT)
 |----------|:-----------:|:----:|:---------:|
 | Immediate | 3 | 3 | 0 |
 | Short-term | 3 | 3 | 0 |
-| Medium-term | 3 | 0 | 3 |
-| **Total** | **9** | **6** | **3** |
+| Medium-term | 3 | 1 | 2 (Base Yield, Analytics) |
+| **Total** | **9** | **7** | **2** |
 
 ---
 

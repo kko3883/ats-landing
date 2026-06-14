@@ -120,10 +120,11 @@ export default function Dashboard() {
     }
     setConnected(true)
 
-    // Fetch existing signals
+    // Fetch existing signals (pending + executed only, hide expired)
     supabase
       .from('signals')
       .select('*')
+      .or('status.eq.pending,status.is.null')
       .order('id', { ascending: false })
       .limit(50)
       .then(({ data, error }) => {

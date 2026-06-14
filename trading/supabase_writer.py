@@ -141,6 +141,7 @@ def _signal_to_row(signal: dict) -> dict:
         "bucket": bucket_map.get(signal.get("bucket", ""), "alpha"),
         "vix_zone": VIX_ZONE_MAP.get(signal.get("group", ""), None),
         "signal_json": signal,
+        "status": "pending",
     }
 
 

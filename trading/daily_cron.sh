@@ -56,11 +56,12 @@ case "${1:-}" in
         run_screener hk
         ;;
     all)
-        # Full morning run: regime + both screeners + portfolio sync
+        # Full morning run: regime + both screeners + portfolio sync + expiry
         run_regime
         run_screener us
         run_screener hk
         run_portfolio_sync
+        run_expire
         ;;
     *)
         echo "Usage: daily_cron.sh [us|hk|all]"
@@ -70,5 +71,11 @@ case "${1:-}" in
         exit 1
         ;;
 esac
+
+run_expire() {
+    log "━━━ Running signal expiry ━━━"
+    python3 "$SCRIPT_DIR/regime/expire_signals.py" >> "$LOG_DIR/daily_cron.log" 2>&1
+    log "  Signal expiry complete (exit=$?)"
+}
 
 log "Done."
