@@ -332,9 +332,12 @@ END OF DAY (16:30 HKT)
    - Effort: ~1 hour of dashboard JS
    - Impact: Biggest UX improvement, answers "what do I do now?"
 
-3. ❌ **Add US daily screener cron job**: Same pattern as HK.
-   - Effort: 5 minutes
-   - Impact: US signals stay current automatically
+3. ✅ **Add US daily screener cron job**: Created `daily_cron.sh` with four modes (us/hk/all). Crontab file at `trading/ats.crontab` ready for manual install (`crontab ats.crontab` — macOS privacy requires manual approval).
+   - 08:00 HKT: US screener (`daily_cron.sh us`)
+   - 09:00 HKT: Regime detector + both screeners + portfolio sync (`daily_cron.sh all`)
+   - Logs to `~/.hermes/trading/logs/daily_cron.log`
+   - Effort: 10 minutes
+   - Impact: US and HK signals + regime + portfolio all automatically updated every weekday
 
 ### Short-term (next 2 weeks)
 
@@ -370,10 +373,10 @@ END OF DAY (16:30 HKT)
 
 | Priority | Total Items | Done | Remaining |
 |----------|:-----------:|:----:|:---------:|
-| Immediate | 3 | 2 | 1 (US cron) |
+| Immediate | 3 | 3 | 0 |
 | Short-term | 3 | 3 | 0 |
 | Medium-term | 3 | 0 | 3 |
-| **Total** | **9** | **5** | **4** |
+| **Total** | **9** | **6** | **3** |
 
 ---
 
