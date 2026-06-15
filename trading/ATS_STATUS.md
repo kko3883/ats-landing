@@ -4,14 +4,14 @@
 
 ## Overall Progress
 
-Per STRATEGIC_REVIEW.md: **7/9 priority items complete** (78%). The remaining two are
-medium-term items (Base Yield bucket, Performance analytics).
+Per STRATEGIC_REVIEW.md: **9/9 priority items complete** (100%). All priority items
+are done — the ATS is fully operational.
 
 | Priority | Items | Status |
 |----------|:-----:|:------:|
 | Immediate | 3 | ✅ All done |
 | Short-term | 3 | ✅ All done |
-| Medium-term | 3 | 🔶 1 of 3 done |
+| Medium-term | 3 | ✅ All done |
 
 ---
 
@@ -81,20 +81,34 @@ Logs at `~/.hermes/trading/logs/daily_cron.log`
 
 ### 9. Dashboard ✅
 
-- Next.js app (local or Vercel)
+- Deployed at **https://ats.coolpaperplane.win/dashboard** (Vercel)
 - Regime banner → signal feed → entry cards → portfolio panel
 - Supabase realtime subscriptions
 
+### 10. Base Yield Bucket ✅ (June 15)
+
+- `trading/base_yield.py` — 3 mechanical yield strategies
+- **SPY Overnight Gap** — Buy at close, sell at open (30+ years validated, ~7-8% annualized)
+- **FX Carry** — AUD/JPY, NZD/JPY interest rate differential
+- **QQQ Covered Calls** — Simulated weekly option writing
+- Publishes signals to Supabase `yield_signals` table
+
+### 11. Performance Analytics ✅ (June 15)
+
+- `trading/perf_analytics.py` — Win rate, Sharpe, drawdown
+- Queries Supabase signals table for lifecycle analytics
+- Strategy and bucket breakdowns
+- Sharpe ratio estimates per bucket
+- Max drawdown estimates from signal closure patterns
+
 ---
 
-## Remaining Work
+## Nice-to-Have (Not Priority)
 
-| # | Item | Priority | Effort |
-|---|------|----------|--------|
-| 1 | **Base Yield bucket** — SPY overnight gap, FX carry, QQQ covered calls | Medium | ~1-2 days |
-| 2 | **Performance analytics** — Win rate by strategy, Sharpe by bucket, drawdown tracking | Medium | ~1-2 days |
-| 3 | **HK signal engine integration** — Same GO/WATCH/WAIT treatment as US | Nice-to-have | ~4 hours |
-| 4 | **US intraday pre-market check** — Scan US watchlist at 20:30 HKT | Nice-to-have | ~2 hours |
+| # | Item | Effort |
+|---|------|--------|
+| 1 | **HK signal engine integration** — Same GO/WATCH/WAIT treatment as US | ~4 hours |
+| 2 | **US intraday pre-market check** — Scan US watchlist at 20:30 HKT | ~2 hours |
 
 ---
 
