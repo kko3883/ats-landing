@@ -10,3 +10,4 @@ out/
 
 # Supabase credentials — DO NOT COMMIT
 .env.supabase
+.DS_Store
