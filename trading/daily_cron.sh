@@ -44,6 +44,12 @@ run_portfolio_sync() {
     log "  Portfolio sync complete (exit=$?)"
 }
 
+run_expire() {
+    log "━━━ Running signal expiry ━━━"
+    python3 "$SCRIPT_DIR/regime/expire_signals.py" >> "$LOG_DIR/daily_cron.log" 2>&1
+    log "  Signal expiry complete (exit=$?)"
+}
+
 log "========================================"
 log "ATS Daily Cron — mode: ${1:-help}"
 log "========================================"
@@ -71,11 +77,5 @@ case "${1:-}" in
         exit 1
         ;;
 esac
-
-run_expire() {
-    log "━━━ Running signal expiry ━━━"
-    python3 "$SCRIPT_DIR/regime/expire_signals.py" >> "$LOG_DIR/daily_cron.log" 2>&1
-    log "  Signal expiry complete (exit=$?)"
-}
 
 log "Done."
