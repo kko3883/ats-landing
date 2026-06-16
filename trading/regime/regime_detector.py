@@ -305,18 +305,6 @@ def publish(
         "activated_groups": activated,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    # Include factor diagnostics for debugging
-    if factors:
-        # Sanitize NaN → None (JSON can't serialize NaN)
-        import math
-        sanitized = {}
-        for k, v in factors.items():
-            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
-                sanitized[k] = None
-            else:
-                sanitized[k] = v
-        row["factors"] = sanitized
-
     resp = requests.post(
         f"{REST_URL}/regime",
         headers=headers,

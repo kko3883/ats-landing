@@ -27,7 +27,7 @@ log() {
 run_screener() {
     local market="$1"
     log "━━━ Running ${market^^} screener ━━━"
-    cd "$REPO_DIR"
+    cd "$SCRIPT_DIR"
     python3 -m watchlist.screener --markets "$market" >> "$LOG_DIR/daily_cron.log" 2>&1
     log "  ${market^^} screener complete (exit=$?)"
 }
