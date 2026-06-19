@@ -263,7 +263,7 @@ def calculate_for_symbol(df: pd.DataFrame) -> dict:
         "macd": {"value": round(macd_val, 4), "signal": macd_sig},
         "adx": {"value": round(adx_val, 2), "signal": adx_sig},
         "rsi": {"value": round(rsi_val, 2), "signal": rsi_sig},
-        "stoch": {"value": round(stoch_k, 2), "signal": stoch_sig},
+        "stoch": {"value": round(stoch_k, 2), "d": round(stoch_d, 2), "signal": stoch_sig},
         "mfi": {"value": round(mfi_val, 2), "signal": mfi_sig},
         "obv": {"value": round(obv_val, 2), "signal": obv_sig},
         "bb": {"value": round(bb_val, 4), "signal": bb_sig},

@@ -71,11 +71,34 @@ REGIMES = {
 
 
 def _get_keychain(service: str = "ats-supabase", account: str = "service_role") -> str:
-    result = subprocess.run(
-        ["security", "find-generic-password", "-w", "-s", service, "-a", account],
-        capture_output=True, text=True, check=True,
+    """Retrieve Supabase key from macOS Keychain. Falls back to .env.local if unavailable."""
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-w", "-s", service, "-a", account],
+            capture_output=True, text=True, check=True, timeout=10,
+        )
+        key = result.stdout.strip()
+        if key:
+            return key
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        pass  # Keychain item not found — try .env.local fallback
+
+    # Fallback: read from .env.local in project root
+    import re
+    env_path = TRADING_DIR.parent.parent.parent / ".env.local"
+    try:
+        env_text = env_path.read_text()
+        match = re.search(r'SUPABASE_SERVICE_ROLE_KEY\s*=\s*["\']?([^"\'\n]+)["\']?', env_text)
+        if match:
+            return match.group(1).strip()
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    raise RuntimeError(
+        f"Could not retrieve Supabase key. "
+        f"Ensure the keychain item '{service}'/'{account}' exists, "
+        f"or set SUPABASE_SERVICE_ROLE_KEY in {env_path}."
     )
-    return result.stdout.strip()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -150,13 +173,23 @@ def fetch_hyg_tlt_spread() -> dict | None:
         mean = float(ratio.rolling(20).mean().iloc[-1])
         std = float(ratio.rolling(20).std().iloc[-1])
 
-        if std == 0:
+        # Guard against NaN/Inf from missing data or division by zero
+        from math import isfinite
+        if not isfinite(current) or not isfinite(mean):
+            return None
+        if std == 0 or not isfinite(std):
             return {"ratio": round(current, 4), "zscore": 0, "wide": False}
 
         zscore = (current - mean) / std
+        if not isfinite(zscore):
+            return None
         # Negative zscore = ratio falling = HYG underperforming TLT = credit stress
         wide = zscore < -1.5  # >1.5σ below 20-day mean = stress signal
-        return {"ratio": round(current, 4), "zscore": round(zscore, 2), "wide": wide}
+        ratio_val = round(current, 4)
+        zscore_val = round(zscore, 2)
+        if not isfinite(ratio_val) or not isfinite(zscore_val):
+            return None
+        return {"ratio": ratio_val, "zscore": zscore_val, "wide": wide}
     except Exception as e:
         print(f"  HYG-TLT failed: {e}")
         return None
@@ -178,8 +211,8 @@ def fetch_spy_qqq_correlation() -> float | None:
             return None
         close = data['Close']
         if isinstance(close, pd.DataFrame) and close.shape[1] >= 2:
-            spy = close.iloc[:, 0].pct_change().dropna()
-            qqq = close.iloc[:, 1].pct_change().dropna()
+            spy = close.iloc[:, 0].pct_change(fill_method=None).dropna()
+            qqq = close.iloc[:, 1].pct_change(fill_method=None).dropna()
         else:
             return None
 
@@ -377,12 +410,18 @@ def main():
     print(f"  Short bias: {cfg['short_bias']}")
 
     # Build factors dict for Supabase (debuggable)
+    from math import isfinite
+
     factors = {"vix": round(vix, 2)}
-    if vix_mom is not None:
+    if vix_mom is not None and isfinite(vix_mom):
         factors["vix_5d_momentum_pct"] = round(vix_mom, 1)
     if hyg_tlt is not None:
-        factors["hyg_tlt_ratio"] = hyg_tlt["ratio"]
-        factors["hyg_tlt_zscore"] = hyg_tlt["zscore"]
+        ratio = hyg_tlt["ratio"]
+        zscore = hyg_tlt["zscore"]
+        if isfinite(ratio):
+            factors["hyg_tlt_ratio"] = ratio
+        if isfinite(zscore):
+            factors["hyg_tlt_zscore"] = zscore
     if yc is not None:
         factors["yc_spread"] = yc["spread"]
         factors["yc_inverted"] = yc["inverted"]

@@ -108,8 +108,13 @@ def analyze_carry():
         rsi = float((100 - 100 / (1 + gain / loss)).iloc[-1])
         
         trend_up = current > sma20_v and sma20_v > sma50_v
-        name = ticker.replace('=X', '')
-        
+        raw = ticker.replace('=X', '')
+        # Normalize to IBKR sym_map format: AUDJPY → AUD/JPY
+        if len(raw) == 6 and '/' not in raw:
+            name = f"{raw[:3]}/{raw[3:]}"
+        else:
+            name = raw
+
         sig = 'HOLD'
         conf = 0
         if trend_up and rsi < 65:
@@ -144,6 +149,9 @@ def place_trade(pair, signal, price, confidence):
             'EUR/USD': 'EURUSD',
             'AUD/JPY': 'AUDJPY',
             'NZD/JPY': 'NZDJPY',
+            # Also support slash-less format from analyze_carry fallback
+            'AUDJPY': 'AUDJPY',
+            'NZDJPY': 'NZDJPY',
         }
         sym = sym_map.get(pair)
         if not sym:
@@ -155,7 +163,7 @@ def place_trade(pair, signal, price, confidence):
         
         # Position sizing
         if 'JPY' in pair:
-            size = 2500000  # JPY pairs: 2.5M JPY min
+            size = 250000  # JPY pairs: 250k JPY (matches POSITION_SIZES in fx_daemon.py)
         elif 'EUR' in pair:
             size = 25000   # EUR pairs: 25k EUR min
         else:
