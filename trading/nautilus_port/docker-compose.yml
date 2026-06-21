@@ -33,8 +33,9 @@ services:
       TIME_ZONE: Asia/Hong_Kong
     ports:
       # Bind to NAS localhost only — never expose IB to the LAN/internet.
-      - "127.0.0.1:4002:4002"        # API (paper)
+      - "127.0.0.1:4000:4000"        # API (paper)
       - "127.0.0.1:5900:5900"        # VNC (reach via SSH tunnel; see DEPLOY.md)
+      - "4004:4004"
     # No settings volume: the gateway runs ephemeral and IBC rebuilds its config from the env
     # vars above on every start. A mounted volume hits "Permission denied" because the gateway
     # runs as uid 1000 while a fresh volume is root-owned. To add persistence later: create the

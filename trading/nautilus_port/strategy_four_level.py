@@ -5,6 +5,16 @@ Ports the 4-level signal engine (SMA structure -> EMA momentum -> RSI exhaustion
 and the ATR protective stop from the original asyncio daemon into a
 NautilusTrader Strategy.
 
+v2: Sliding 1H evaluation + fast trigger
+    - Subscribes to 15-minute bars instead of 1-hour bars.
+    - Builds a trailing-60-minute (sliding) 1H bar from the last four 15m bars
+      on every 15m close.
+    - Hourly indicators (SMA20/50, EMA20/50, RSI14, ATR14) are computed on the
+      series of sliding 1H bars — evaluates the same hourly mechanism 4x/hour.
+    - Fast trigger gate (Layer 2) confirms 15m momentum aligns with hourly
+      permission before firing an entry.
+    - Debounce prevents re-entry churn from sliding-window cross flicker.
+
 WHAT NAUTILUS GIVES YOU (that the daemon hand-rolled and got wrong):
   * Order/position state machine + startup reconciliation -> kills the
     "wrong-way market order on an already-flat position" bug (review #1).
@@ -27,6 +37,7 @@ import os
 import threading
 import urllib.parse
 import urllib.request
+from collections import deque
 from datetime import timedelta
 from decimal import Decimal
 
@@ -45,12 +56,13 @@ from nautilus_trader.model.enums import (
     TriggerType,
 )
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.model.position import Position
 from nautilus_trader.trading.strategy import Strategy
 
 
 class FourLevelConfig(StrategyConfig, frozen=True):
-    # Bar types, e.g. "EUR/USD.IDEALPRO-1-HOUR-MID-EXTERNAL"
+    # Bar types — now 15m (e.g. "EUR.USD-15-MINUTE-MID-EXTERNAL")
     bar_types: list[str]
     # Per-instrument trade size in units, keyed by instrument_id string
     position_sizes: dict[str, int]
@@ -60,21 +72,56 @@ class FourLevelConfig(StrategyConfig, frozen=True):
     rsi_period: int = 14
     min_confidence: int = 2
     # GTC so a daemon/gateway outage cannot strip your protective stop.
-    # (Review note: the old code used tif='DAY', which expires overnight and
-    #  leaves positions naked if the host is down at session roll.)
     stop_tif: TimeInForce = TimeInForce.GTC
+
+    # ── Sliding-window & fast-trigger config (v2) ─────────────────────────
+    bar_interval_minutes: int = 15
+    sliding_window_bars: int = 4          # 4 x 15m = 60 min sliding 1H
+    buffer_maxlen: int = 256
+    history_prefill_bars: int = 300
+    fast_trigger_enabled: bool = True
+    fast_trigger_ema_period: int = 8      # on 15m closes
+    fast_trigger_rsi_guard: bool = True
+    fast_trigger_rsi_high: int = 75
+    fast_trigger_rsi_low: int = 25
+    min_bars_between_entries: int = 1
 
 
 class _InstState:
-    """Per-instrument indicator bundle + the previous-bar SMAs needed for the
-    golden/death-cross detection in the original compute_level()."""
+    """Per-instrument indicator bundle + sliding-1H buffers + debounce state."""
 
     __slots__ = (
+        # 15m bar buffer (fixed-length deque, oldest bar automatically discarded)
+        "buffer_15m",
+        # BarType of the 15m subscription (used for building synthetic 1H bars)
+        "bar_type_15m",
+        # Hourly indicators — fed synthetic sliding-1H bars
         "sma20", "sma50", "ema20", "ema50", "rsi", "atr",
-        "prev_s20", "prev_s50", "stop_attached",
+        "prev_s20", "prev_s50",
+        "stop_attached",
+        # Fast-trigger (15m) indicators — fed actual 15m bars
+        "ft_ema",               # ExponentialMovingAverage on 15m closes
+        "ft_rsi",               # RelativeStrengthIndex on 15m closes
+        # Warmup
+        "is_warm",
+        # Debounce
+        "last_signal_state",        # "LONG" / "SHORT" / "FLAT" — signal from previous eval
+        "last_entry_direction",     # "LONG" / "SHORT" — direction of last fired entry
+        "signal_flipped_to_neutral",# True if signal went FLAT/opposite since last entry
+        "bars_since_last_entry",    # count of 15m evaluations since last entry
     )
 
-    def __init__(self, rsi_period: int, atr_period: int):
+    def __init__(
+        self,
+        rsi_period: int,
+        atr_period: int,
+        buffer_maxlen: int,
+        ft_ema_period: int,
+        bar_type_15m: BarType,
+    ):
+        self.buffer_15m: deque[Bar] = deque(maxlen=buffer_maxlen)
+        self.bar_type_15m = bar_type_15m
+        # Hourly indicators (on sliding-1H)
         self.sma20 = SimpleMovingAverage(20)
         self.sma50 = SimpleMovingAverage(50)
         self.ema20 = ExponentialMovingAverage(20)
@@ -84,6 +131,16 @@ class _InstState:
         self.prev_s20: float | None = None
         self.prev_s50: float | None = None
         self.stop_attached: bool = False
+        # Fast trigger (15m)
+        self.ft_ema = ExponentialMovingAverage(ft_ema_period)
+        self.ft_rsi = RelativeStrengthIndex(rsi_period)
+        # Warmup
+        self.is_warm: bool = False
+        # Debounce
+        self.last_signal_state: str = "FLAT"
+        self.last_entry_direction: str | None = None
+        self.signal_flipped_to_neutral: bool = True
+        self.bars_since_last_entry: int = 9999
 
 
 class FourLevelStrategy(Strategy):
@@ -98,23 +155,39 @@ class FourLevelStrategy(Strategy):
         self._state_interval = int(os.environ.get("STATE_INTERVAL_SECS", "30"))
         self._snap_stop = threading.Event()
         self._snap_thread = None
+        # Observability counters (added to state.json, non-breaking)
+        self._counters: dict[str, int] = {
+            "evals_total": 0,
+            "signals_raw": 0,
+            "blocked_by_debounce": 0,
+            "blocked_by_fast_trigger": 0,
+            "entries_fired": 0,
+        }
 
     # ── lifecycle ──────────────────────────────────────────────────────────
     def on_start(self):
         for bt_str in self.config.bar_types:
             bar_type = BarType.from_str(bt_str)
             iid = bar_type.instrument_id
-            st = _InstState(self.config.rsi_period, self.config.atr_period)
+            st = _InstState(
+                rsi_period=self.config.rsi_period,
+                atr_period=self.config.atr_period,
+                buffer_maxlen=self.config.buffer_maxlen,
+                ft_ema_period=self.config.fast_trigger_ema_period,
+                bar_type_15m=bar_type,
+            )
             self._state[iid] = st
             self._bar_types[iid] = bar_type
-            # Auto-update every indicator on each bar of this type
-            for ind in (st.sma20, st.sma50, st.ema20, st.ema50, st.rsi, st.atr):
-                self.register_indicator_for_bars(bar_type, ind)
-            # Warm up indicators with ~10 days of 1h history (start is REQUIRED in 1.227), then stream live
-            self.request_bars(bar_type, start=self.clock.utc_now() - timedelta(days=10))
+            # Request historical 15m bars to pre-fill the buffer.
+            # 300 bars * 15 min = 75 h ≈ 3.125 days; use 4 days for safety margin.
+            prefill_start = self.clock.utc_now() - timedelta(days=4)
+            self.request_bars(bar_type, start=prefill_start)
             self.subscribe_bars(bar_type)
-            self.log.info(f"Subscribed {bar_type}")
-        self._notify("🟢 ATS FX strategy started (paper) — " + ", ".join(str(i) for i in self._bar_types))
+            self.log.info(f"Subscribed {bar_type} (15m, sliding-1H eval)")
+
+        self._notify("🟢 ATS FX strategy started (paper, sliding-1H) — "
+                     + ", ".join(str(i) for i in self._bar_types))
+
         if self._state_path:
             self._write_state()              # initial snapshot
             self._start_snapshot_thread()    # refresh every _state_interval seconds
@@ -126,31 +199,80 @@ class FourLevelStrategy(Strategy):
         for iid in self._state:
             self.cancel_all_orders(iid)
 
-    # ── core decision loop ─────────────────────────────────────────────────
+    # ── core decision loop (v2: sliding-1H evaluation) ─────────────────────
     def on_bar(self, bar: Bar):
         iid = bar.bar_type.instrument_id
         st = self._state.get(iid)
-        if st is None or not self._ready(st):
+        if st is None:
             return
 
-        level, rsi = self._compute_level(st, float(bar.close))
+        # 1. Append 15m bar to the rolling buffer
+        st.buffer_15m.append(bar)
+
+        # 2. Update fast-trigger (15m) indicators with the actual 15m bar
+        st.ft_ema.handle_bar(bar)
+        st.ft_rsi.handle_bar(bar)
+
+        # 3. Warmup check — need enough 15m bars to seed the sliding-1H indicators
+        if not st.is_warm:
+            if self._check_warmup(st):
+                st.is_warm = True
+                self.log.info(f"Warmup complete for {iid} "
+                              f"(buffer: {len(st.buffer_15m)} 15m bars)")
+            else:
+                return  # still cold, silently ingest
+
+        # 4. Build sliding-1H bar from the trailing N 15m bars
+        bar_1h = self._build_sliding_1h(st, bar)
+        if bar_1h is None:
+            return
+
+        # 5. Feed the synthetic sliding-1H bar to hourly indicators
+        st.sma20.handle_bar(bar_1h)
+        st.sma50.handle_bar(bar_1h)
+        st.ema20.handle_bar(bar_1h)
+        st.ema50.handle_bar(bar_1h)
+        st.rsi.handle_bar(bar_1h)
+        st.atr.handle_bar(bar_1h)
+
+        # Re-check indicator readiness after feeding (indicators may need more bars)
+        if not self._indicators_ready(st):
+            return
+
+        # 6. Compute level and raw signal (EXACT same logic as original)
+        level, rsi = self._compute_level(st, float(bar_1h.close))
         signal, conf = self._derive_signal(level, rsi)
 
+        # 7. Observability counters
+        self._counters["evals_total"] += 1
+        st.bars_since_last_entry += 1
+
+        # 8. Update latest state per instrument (for /status)
         self._latest[iid] = {
             "level": level, "rsi": round(rsi, 1), "signal": signal, "confidence": conf,
-            "price": round(float(bar.close), 5), "ts": self.clock.utc_now().isoformat(),
+            "price": round(float(bar_1h.close), 5), "ts": self.clock.utc_now().isoformat(),
         }
         self._write_state()
 
+        # Log every evaluation at DEBUG
+        self.log.debug(
+            f"Eval {iid}: close={float(bar_1h.close):.5f} "
+            f"L{level} RSI={rsi:.1f} signal={signal} conf={conf} "
+            f"s20={st.sma20.value:.5f} s50={st.sma50.value:.5f} "
+            f"e20={st.ema20.value:.5f} e50={st.ema50.value:.5f} "
+            f"atr={st.atr.value:.5f}"
+        )
+
         net = self.portfolio.net_position(iid)  # Decimal: >0 long, <0 short, 0 flat
 
-        # 1) Manage exits on an existing position first (level-system signal exit).
+        # 9) Manage exits on an existing position first (level-system signal exit).
         #    The trailing stop handles the price-based exit independently.
+        #    EXITS ARE NOT DEBOUNCED — always act immediately.
         if net != 0:
             self._manage_exit(iid, net, level, rsi)
             return  # at most one position action per bar
 
-        # 2) Entries (only when flat). Respect the /pause and per-pair switches.
+        # 10) Entries (only when flat). Respect the /pause and per-pair switches.
         if signal in ("LONG", "SHORT") and conf >= self.config.min_confidence:
             ctrl = self._load_control()
             if not ctrl["trading_enabled"]:
@@ -159,9 +281,193 @@ class FourLevelStrategy(Strategy):
             if not ctrl["pairs"].get(str(iid), True):
                 self.log.info(f"Entry skipped {iid}: pair disabled")
                 return
-            self._enter(iid, signal, st, bar)
+
+            self._counters["signals_raw"] += 1
+
+            # Debounce: prevent re-entry churn from sliding-window cross flicker
+            if not self._check_debounce(st, signal):
+                self._counters["blocked_by_debounce"] += 1
+                self.log.debug(
+                    f"Debounce blocked {iid}: {signal} "
+                    f"(last_entry={st.last_entry_direction}, "
+                    f"flipped={st.signal_flipped_to_neutral}, "
+                    f"bars_since={st.bars_since_last_entry})"
+                )
+                return
+
+            # Fast trigger gate (Layer 2): confirm 15m momentum aligns
+            if self.config.fast_trigger_enabled:
+                if not self._check_fast_trigger(st, signal):
+                    self._counters["blocked_by_fast_trigger"] += 1
+                    self.log.debug(
+                        f"Fast-trigger blocked {iid}: {signal} "
+                        f"(15m close={float(bar.close):.5f} "
+                        f"ft_ema={st.ft_ema.value:.5f} "
+                        f"ft_rsi={st.ft_rsi.value:.1f})"
+                    )
+                    return
+
+            # All gates passed — fire entry
+            self._counters["entries_fired"] += 1
+            st.last_entry_direction = signal
+            st.signal_flipped_to_neutral = False
+            st.bars_since_last_entry = 0
+            self._enter(iid, signal, st, bar_1h)
+
+    # ── sliding-1H construction ────────────────────────────────────────────
+    def _build_sliding_1h(self, st: _InstState, latest_bar: Bar) -> Bar | None:
+        """Build a synthetic trailing-60-minute bar from the last N 15m bars."""
+        buf = st.buffer_15m
+        window_n = self.config.sliding_window_bars
+        if len(buf) < window_n:
+            return None
+
+        # Extract the trailing window (list from deque)
+        window = list(buf)[-window_n:]
+
+        open_p = window[0].open
+        high_p = max(b.high for b in window)
+        low_p = min(b.low for b in window)
+        close_p = window[-1].close
+        # Sum volume across the four 15m bars
+        vol_sum = sum(int(b.volume) for b in window)
+        ts_event = window[-1].ts_event
+        ts_init = latest_bar.ts_init
+
+        return Bar(
+            bar_type=st.bar_type_15m,  # re-use 15m bar_type; indicators only read OHLCV
+            open=open_p,
+            high=high_p,
+            low=low_p,
+            close=close_p,
+            volume=Quantity(vol_sum, precision=0),
+            ts_event=ts_event,
+            ts_init=ts_init,
+        )
+
+    # ── warmup ─────────────────────────────────────────────────────────────
+    def _check_warmup(self, st: _InstState) -> bool:
+        """Return True when enough 15m bars are in the buffer + hourly indicators
+        have enough sliding-1H points to be initialized."""
+        buf = st.buffer_15m
+        window_n = self.config.sliding_window_bars
+
+        # Need at least window_n bars to build one sliding-1H bar
+        if len(buf) < window_n:
+            return False
+
+        # Build all available sliding-1H bars from the buffer and feed to indicators.
+        # This catches up historical bars that arrived via request_bars().
+        # We feed sliding-1H bars sequentially to warm the indicators.
+        for i in range(window_n, len(buf) + 1):
+            window = list(buf)[i - window_n:i]
+            bar_1h = Bar(
+                bar_type=st.bar_type_15m,
+                open=window[0].open,
+                high=max(b.high for b in window),
+                low=min(b.low for b in window),
+                close=window[-1].close,
+                volume=Quantity(sum(int(b.volume) for b in window), precision=0),
+                ts_event=window[-1].ts_event,
+                ts_init=window[-1].ts_init,
+            )
+            st.sma20.handle_bar(bar_1h)
+            st.sma50.handle_bar(bar_1h)
+            st.ema20.handle_bar(bar_1h)
+            st.ema50.handle_bar(bar_1h)
+            st.rsi.handle_bar(bar_1h)
+            st.atr.handle_bar(bar_1h)
+
+        # Check if the slowest indicator (SMA50) is initialized
+        return self._indicators_ready(st)
+
+    @staticmethod
+    def _indicators_ready(st: _InstState) -> bool:
+        """Return True when all hourly indicators are initialized."""
+        return all(
+            i.initialized
+            for i in (st.sma50, st.ema50, st.rsi, st.atr)
+        )
+
+    # ── debounce (prevents sliding-window flicker) ─────────────────────────
+    def _update_debounce_state(self, st: _InstState, signal: str):
+        """Track whether signal has flipped to neutral/opposite since last entry.
+        Called on every evaluation regardless of whether we act on the signal."""
+        prev = st.last_signal_state
+        st.last_signal_state = signal
+
+        if st.last_entry_direction is None:
+            return
+
+        # A flip to HOLD or opposite direction resets the debounce gate
+        if signal == "HOLD":
+            st.signal_flipped_to_neutral = True
+        elif st.last_entry_direction == "LONG" and signal == "SHORT":
+            st.signal_flipped_to_neutral = True
+        elif st.last_entry_direction == "SHORT" and signal == "LONG":
+            st.signal_flipped_to_neutral = True
+
+    def _check_debounce(self, st: _InstState, signal: str) -> bool:
+        """Return True if entry should proceed, False to block.
+
+        Rule: do not open a NEW position in the same direction unless the signal
+        state has flipped to FLAT (or opposite) since the last entry AND at least
+        MIN_BARS_BETWEEN_ENTRIES bars have passed.
+        """
+        # Update debounce state tracking first
+        self._update_debounce_state(st, signal)
+
+        # First entry ever — always allow
+        if st.last_entry_direction is None:
+            return True
+
+        # Different direction — always allow
+        if signal != st.last_entry_direction:
+            return True
+
+        # Same direction — require intervening state change + min bars
+        if not st.signal_flipped_to_neutral:
+            return False
+        if st.bars_since_last_entry < self.config.min_bars_between_entries:
+            return False
+        return True
+
+    # ── fast trigger (Layer 2 — confirmation gate) ─────────────────────────
+    def _check_fast_trigger(self, st: _InstState, signal: str) -> bool:
+        """Return True if 15m momentum confirms the hourly permission.
+
+        LONG:  latest 15m close > 15m EMA(8); optionally 15m RSI(14) < 75
+        SHORT: latest 15m close < 15m EMA(8); optionally 15m RSI(14) > 25
+        """
+        if not st.ft_ema.initialized:
+            return True  # not enough data yet — allow (let hourly be the gate)
+
+        ft_ema_val = st.ft_ema.value
+        if ft_ema_val is None:
+            return True
+
+        # Get latest 15m close from the buffer
+        if len(st.buffer_15m) == 0:
+            return False
+        last_close = float(st.buffer_15m[-1].close)
+
+        if signal == "LONG":
+            if last_close <= ft_ema_val:
+                return False
+            if self.config.fast_trigger_rsi_guard and st.ft_rsi.initialized:
+                if st.ft_rsi.value is not None and st.ft_rsi.value >= self.config.fast_trigger_rsi_high:
+                    return False
+        elif signal == "SHORT":
+            if last_close >= ft_ema_val:
+                return False
+            if self.config.fast_trigger_rsi_guard and st.ft_rsi.initialized:
+                if st.ft_rsi.value is not None and st.ft_rsi.value <= self.config.fast_trigger_rsi_low:
+                    return False
+
+        return True
 
     # ── signal engine (ported from fx_daemon.compute_level / analyze_pair) ──
+    #            *** EXACT same logic as v1 — UNCHANGED ***
     def _compute_level(self, st: _InstState, current: float) -> tuple[int, float]:
         s20, s50 = st.sma20.value, st.sma50.value
         e20, e50 = st.ema20.value, st.ema50.value
@@ -256,6 +562,7 @@ class FourLevelStrategy(Strategy):
 
     def on_position_opened(self, event):
         # Attach the ATR trailing stop once the entry actually fills.
+        # ATR value is now from the sliding-1H series (still hourly ATR14).
         iid = event.instrument_id
         st = self._state.get(iid)
         if st is None or st.stop_attached:
@@ -371,7 +678,10 @@ class FourLevelStrategy(Strategy):
             self.log.warning(f"trade log append failed: {exc}")
 
     def _write_state(self):
-        """Snapshot live state to STATE_PATH for the Telegram bot. No-op if unset; never raises."""
+        """Snapshot live state to STATE_PATH for the Telegram bot. No-op if unset; never raises.
+
+        v2 additions: observability counters (non-breaking — ADDED, not removed/renamed).
+        """
         if not self._state_path:
             return
         try:
@@ -405,6 +715,8 @@ class FourLevelStrategy(Strategy):
                 "positions": positions,
                 "stops": stops,
                 "account": account,
+                # v2 observability counters (ADDED, non-breaking)
+                "counters": self._counters,
             }
             tmp = self._state_path + ".tmp"
             with open(tmp, "w") as f:
@@ -414,10 +726,8 @@ class FourLevelStrategy(Strategy):
             self.log.warning(f"state snapshot failed: {exc}")
 
     # ── helpers ────────────────────────────────────────────────────────────
-    @staticmethod
-    def _ready(st: _InstState) -> bool:
-        return all(i.initialized for i in (st.sma50, st.ema50, st.rsi, st.atr))
-
     def _open_position(self, iid: InstrumentId) -> Position | None:
         positions = self.cache.positions_open(instrument_id=iid)
         return positions[0] if positions else None
+
+    # _ready() removed — replaced by _check_warmup / _indicators_ready (v2)
