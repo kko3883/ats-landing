@@ -1,13 +1,13 @@
 """
-Live / paper runner — wires FourLevelStrategy to Interactive Brokers through a
+Live / paper runner -- wires FourLevelStrategy to Interactive Brokers through a
 Gateway you already run (the dockerized gnzsnz/ib-gateway on the NAS).
 
 Nautilus's TradingNode reconciles open orders + positions against IB on connect
-and via a background loop — this is the layer the old daemon hand-rolled and got
-wrong. (Caveat: see GitHub issue #3655 — manual closes outside Nautilus can still
+and via a background loop -- this is the layer the old daemon hand-rolled and got
+wrong. (Caveat: see GitHub issue #3655 -- manual closes outside Nautilus can still
 be missed for the IB adapter, so test the "close a position in TWS" scenario.)
 
-Targets NautilusTrader v1.227.0 — verify config field names against your version.
+Targets NautilusTrader v1.227.0 -- verify config field names against your version.
 
 Run:
     export IB_ACCOUNT_ID=DU1234567      # paper account id from IB
@@ -29,9 +29,10 @@ from nautilus_trader.live.node import TradingNode
 
 from strategy_four_level import FourLevelConfig, FourLevelStrategy
 
-# ── Instruments (IB FX venue is IDEALPRO) ──
+# -- Instruments (IB FX venue is IDEALPRO) --
+# v2: 15-minute bars -- sliding 1H is built internally from 4 x 15m bars.
 FX = ["EUR/USD.IDEALPRO", "AUD/JPY.IDEALPRO", "NZD/JPY.IDEALPRO"]
-BAR_TYPES = [f"{s}-1-HOUR-MID-EXTERNAL" for s in FX]
+BAR_TYPES = [f"{s}-15-MINUTE-MID-EXTERNAL" for s in FX]
 
 # 4002 = IB Gateway paper, 4001 = live. Start on paper.
 IBG_HOST = os.environ.get("IBG_HOST", "127.0.0.1")
@@ -52,7 +53,7 @@ exec_client = InteractiveBrokersExecClientConfig(
     ibg_host=IBG_HOST,
     ibg_port=IBG_PORT,
     ibg_client_id=1,
-    account_id=os.environ["IB_ACCOUNT_ID"],  # "DU…" paper / "U…" live
+    account_id=os.environ["IB_ACCOUNT_ID"],
     instrument_provider=instrument_provider,
 )
 
@@ -65,8 +66,8 @@ strategy = FourLevelStrategy(
             "NZD/JPY.IDEALPRO": 250_000,
         },
         atr_multipliers={
-            "EUR/USD.IDEALPRO": 5.0,   # trend
-            "AUD/JPY.IDEALPRO": 10.0,  # carry — wide safety stop
+            "EUR/USD.IDEALPRO": 5.0,
+            "AUD/JPY.IDEALPRO": 10.0,
             "NZD/JPY.IDEALPRO": 10.0,
         },
     )
