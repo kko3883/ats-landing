@@ -36,13 +36,5 @@ CREATE POLICY "anon_select_equity_state" ON equity_state
   USING (true);
 
 -- Enable realtime for live dashboard updates
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_publication_tables
-    WHERE pubname = 'supabase_realtime' AND tablename = 'equity_state'
-  ) THEN
-    ALTER publication supabase_realtime ADD TABLE equity_state;
-  END IF;
-END;
-$$;
+-- NOTE: If this fails with "publication already exists", the table is already added — ignore error.
+ALTER publication supabase_realtime ADD TABLE equity_state;
