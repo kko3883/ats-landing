@@ -36,7 +36,7 @@ import numpy as np
 # Add parent to path for direct execution
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from equity_engine.config import EngineConfig, STATE_FILE, TRADES_LOG, IBG_PORT_LIVE, IBG_CLIENT_ID, IB_ACCOUNT_ID
+from equity_engine.config import EngineConfig, STATE_FILE, TRADES_LOG, IBG_PORT_LIVE, IBG_CLIENT_ID, IB_ACCOUNT_ID, SUPABASE_URL, SUPABASE_ANON_KEY
 from equity_engine.data.longbridge_stream import Bar, LongbridgeStreamer, StreamConfig
 from equity_engine.data.adjustments import check_overnight_gap, is_open_cooldown, compute_atr
 from equity_engine.layer1_macro.regime_client import RegimeClient
@@ -69,8 +69,8 @@ class EquityTradingEngine:
 
         # Layer 1
         self._regime_client = RegimeClient(
-            supabase_url=config.SUPABASE_URL,
-            supabase_anon_key=config.SUPABASE_ANON_KEY,
+            supabase_url=SUPABASE_URL,
+            supabase_anon_key=SUPABASE_ANON_KEY,
         )
         self._macro_filter = DailyMacroFilter(
             sma_period=config.layer1.sma_period,
