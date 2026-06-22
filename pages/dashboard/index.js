@@ -292,7 +292,12 @@ export default function Dashboard() {
       <div className="max-w-6xl mx-auto px-4 py-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+            <a href="/equity" className="text-xs px-3 py-1 rounded-full border border-blue-500/40 text-blue-400 hover:bg-blue-500/10 transition-colors">
+              📊 Equity Engine →
+            </a>
+          </div>
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
             <span className="text-xs text-market-400">Live</span>

@@ -51,6 +51,7 @@ from equity_engine.layer3_micro.exit_manager import ExitManager
 from equity_engine.execution.ib_bridge import IBBridge
 from equity_engine.execution.risk_controller import RiskController
 from equity_engine.execution.state_tracker import StateTracker, PositionRecord
+from equity_engine.execution.supabase_publisher import publish_engine_state
 
 logger = logging.getLogger("equity_engine")
 
@@ -225,13 +226,15 @@ class EquityTradingEngine:
                 elif bar.period == "1d":
                     self._handle_d1_bar(bar)
 
-                # Periodic state save
-                if self._m15_count % 4 == 0:
+                # Periodic state save + Supabase publish (every ~30s)
+                if self._m15_count % 2 == 0:
                     self._state.save()
                     self._append_trade_log_raw({"ts": datetime.now(timezone.utc).isoformat(),
                                                   "event": "heartbeat",
                                                   "equity": self._risk_ctrl.portfolio_equity,
                                                   "positions": self._state.position_count})
+                    # Publish to Supabase for Vercel dashboard
+                    self._publish_to_supabase()
 
             except asyncio.CancelledError:
                 break
@@ -483,6 +486,26 @@ class EquityTradingEngine:
                 f.write(json.dumps(record, default=str) + "\n")
         except Exception:
             pass
+
+    def _publish_to_supabase(self):
+        """Publish engine state to Supabase for the Vercel dashboard."""
+        try:
+            regime = self._regime_client.fetch_regime()
+            publish_engine_state(
+                equity=self._risk_ctrl.portfolio_equity,
+                starting_equity=100_000.0,  # TODO: capture actual starting equity
+                position_count=self._state.position_count,
+                trade_count=self._state.trade_count,
+                paused=self._risk_ctrl.is_paused,
+                regime=regime.regime_name,
+                layer1_approved=len(self._approved),
+                layer2_signals=0,  # aggregated below
+                layer2_features=self._m15_count,
+                layer3_exits=self._exits_fired,
+                positions=self._state.all_positions,
+            )
+        except Exception:
+            pass  # Supabase publish is fire-and-forget
 
 
 # ── Entrypoint ──────────────────────────────────────────────────────────────

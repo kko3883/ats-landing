@@ -1,0 +1,11 @@
+# Run these commands on your NAS (kelvinko@KKO-NAS) to redeploy:
+# Step 1: stash local changes so git pull doesn't abort
+cd /volume1/docker/ats-landing
+git stash
+
+# Step 2: pull latest code from GitHub
+/volume1/docker/dgit pull origin main
+
+# Step 3: rebuild and start the daemon
+cd trading/nautilus_port
+sudo docker-compose up -d --buildherme

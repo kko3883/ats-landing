@@ -31,7 +31,7 @@ from strategy_four_level import FourLevelConfig, FourLevelStrategy
 
 # -- Instruments (IB FX venue is IDEALPRO) --
 # v2: 15-minute bars -- sliding 1H is built internally from 4 x 15m bars.
-FX = ["EUR/USD.IDEALPRO", "AUD/JPY.IDEALPRO", "NZD/JPY.IDEALPRO"]
+FX = ["EUR.USD", "AUD.JPY", "NZD.JPY"]
 BAR_TYPES = [f"{s}-15-MINUTE-MID-EXTERNAL" for s in FX]
 
 # 4002 = IB Gateway paper, 4001 = live. Start on paper.
@@ -61,14 +61,14 @@ strategy = FourLevelStrategy(
     FourLevelConfig(
         bar_types=BAR_TYPES,
         position_sizes={
-            "EUR/USD.IDEALPRO": 100_000,
-            "AUD/JPY.IDEALPRO": 250_000,
-            "NZD/JPY.IDEALPRO": 250_000,
+            "EUR.USD": 100_000,
+            "AUD.JPY": 250_000,
+            "NZD.JPY": 250_000,
         },
         atr_multipliers={
-            "EUR/USD.IDEALPRO": 5.0,
-            "AUD/JPY.IDEALPRO": 10.0,
-            "NZD/JPY.IDEALPRO": 10.0,
+            "EUR.USD": 5.0,
+            "AUD.JPY": 10.0,
+            "NZD.JPY": 10.0,
         },
     )
 )
