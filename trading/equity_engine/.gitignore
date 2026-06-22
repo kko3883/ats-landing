@@ -1,0 +1,21 @@
+# Model files
+models/*.json
+models/*.pkl
+!models/.gitkeep
+
+# State and logs
+*.jsonl
+*.log
+*.tmp
+
+# Data cache
+hist_cache/
+
+# Dataset outputs
+datasets/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
