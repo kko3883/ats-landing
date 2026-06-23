@@ -600,17 +600,9 @@ class FourLevelStrategy(Strategy):
         self.submit_order(order)
         self.log.info(f"Entry {signal} {size} {iid} @ ~{bar.close}")
 
-    def on_position_opened(self, event):
-        # Attach the ATR trailing stop once the entry actually fills.
-        # ATR value is now from the sliding-1H series (still hourly ATR14).
-        iid = event.instrument_id
-        st = self._state.get(iid)
-        if st is None or st.stop_attached:
-            return
-        instrument = self.cache.instrument(iid)
-        net = self.portfolio.net_position(iid)
-        if net == 0 or instrument is None:
-            return
+    def _attach_stop(self, iid, st, pos, instrument, net):
+        """Submit one ATR trailing stop for the given position. DRY shared by
+        on_position_opened (new fills) and _attach_stops_to_existing (startup)."""
         mult = self.config.atr_multipliers.get(str(iid), 5.0)
         offset = round(st.atr.value * mult, instrument.price_precision)
         stop_side = OrderSide.SELL if net > 0 else OrderSide.BUY
@@ -620,23 +612,31 @@ class FourLevelStrategy(Strategy):
             quantity=instrument.make_qty(int(abs(net))),
             trailing_offset=Decimal(str(offset)),
             trailing_offset_type=TrailingOffsetType.PRICE,
-            # FX has no trades — trigger on bid/ask. Switch to LAST_PRICE for
-            # instruments that print last trades (e.g. equities via Longbridge).
             trigger_type=TriggerType.BID_ASK,
             time_in_force=self.config.stop_tif,
             reduce_only=True,
+            position_id=pos.id,  # use strategy-managed position_id, not EXTERNAL
         )
-        # Compute and store stop trigger price for /status display.
-        # The trailing stop order's trigger_price is not always introspectable via
-        # the generic cache, so we track it here in _InstState.
-        pos = self._open_position(iid)
-        if pos is not None:
-            entry_px = float(pos.avg_px_open)
-            stop_px = round(entry_px - offset, instrument.price_precision) if net > 0 else round(entry_px + offset, instrument.price_precision)
-            st.stop_price = stop_px
+        entry_px = float(pos.avg_px_open)
+        stop_px = round(entry_px - offset, instrument.price_precision) if net > 0 else round(entry_px + offset, instrument.price_precision)
+        st.stop_price = stop_px
         st.stop_attached = True
         self.submit_order(trailing)
         self.log.info(f"Trailing stop attached {iid}: offset {offset} ({mult}x ATR)")
+
+    def on_position_opened(self, event):
+        iid = event.instrument_id
+        st = self._state.get(iid)
+        if st is None or st.stop_attached:
+            return
+        instrument = self.cache.instrument(iid)
+        net = self.portfolio.net_position(iid)
+        if net == 0 or instrument is None:
+            return
+        pos = self._open_position(iid)
+        if pos is None:
+            return
+        self._attach_stop(iid, st, pos, instrument, net)
 
     def on_position_closed(self, event):
         iid = event.instrument_id
@@ -800,32 +800,11 @@ class FourLevelStrategy(Strategy):
                     f"(initialized={st.atr.initialized}, value={st.atr.value})"
                 )
                 continue
-            mult = self.config.atr_multipliers.get(str(iid), 5.0)
-            offset = round(st.atr.value * mult, instrument.price_precision)
-            stop_side = OrderSide.SELL if net > 0 else OrderSide.BUY
-            trailing = self.order_factory.trailing_stop_market(
-                instrument_id=iid,
-                order_side=stop_side,
-                quantity=instrument.make_qty(int(abs(net))),
-                trailing_offset=Decimal(str(offset)),
-                trailing_offset_type=TrailingOffsetType.PRICE,
-                trigger_type=TriggerType.BID_ASK,
-                time_in_force=self.config.stop_tif,
-                reduce_only=True,
-            )
-            entry_px = float(pos.avg_px_open)
-            stop_px = round(entry_px - offset, instrument.price_precision) if net > 0 else round(entry_px + offset, instrument.price_precision)
-            st.stop_price = stop_px
-            st.stop_attached = True
-            self.submit_order(trailing)
+            self._attach_stop(iid, st, pos, instrument, net)
             attached += 1
-            self._notify(
-                f"🛡️ Attached stop to pre-existing {iid} position "
-                f"(stop ~{stop_px}, {mult}x ATR)"
-            )
             self.log.info(
-                f"Retroactive stop attached {iid}: offset {offset} ({mult}x ATR) "
-                f"stop {stop_px} for pre-existing position size {net}"
+                f"Retroactive stop attached {iid}: stop {st.stop_price} "
+                f"for pre-existing position size {net}"
             )
         if attached > 0:
             self._notify(f"🛡️ Attached protective stops to {attached} pre-existing position(s)")
