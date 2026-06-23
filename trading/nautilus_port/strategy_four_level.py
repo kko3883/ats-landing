@@ -260,11 +260,22 @@ class FourLevelStrategy(Strategy):
         if not self._indicators_ready(st):
             return
 
-        # After the FIRST warm evaluation, attach stops to any pre-existing positions
+        # After each warm evaluation, try to attach stops to any pre-existing positions
         # that were reconciled from IB on startup (they missed on_position_opened).
+        # Keep retrying until all positions are covered, since different instruments
+        # warm up at different times.
         if self._stops_pending_on_warm:
-            self._stops_pending_on_warm = False  # one-shot
             self._attach_stops_to_existing()
+            # Check if any open position still lacks a stop
+            still_pending = False
+            for pos in self.cache.positions_open():
+                iid = pos.instrument_id
+                s = self._state.get(iid)
+                if s and not s.stop_attached:
+                    still_pending = True
+                    break
+            if not still_pending:
+                self._stops_pending_on_warm = False
 
         # 6. Compute level and raw signal (EXACT same logic as original)
         level, rsi = self._compute_level(st, float(bar_1h.close))
