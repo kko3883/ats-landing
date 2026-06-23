@@ -156,7 +156,7 @@ class FourLevelStrategy(Strategy):
         self._state_interval = int(os.environ.get("STATE_INTERVAL_SECS", "30"))
         self._snap_stop = threading.Event()
         self._snap_thread = None
-        self._stops_pending_on_warm: bool = False  # set True after reconcile if pre-existing positions exist
+        self._stops_pending_on_warm: bool = True   # always true on startup — attach stops on first warm eval
         # Observability counters (added to state.json, non-breaking)
         self._counters: dict[str, int] = {
             "evals_total": 0,
@@ -193,13 +193,6 @@ class FourLevelStrategy(Strategy):
         if self._state_path:
             self._write_state()              # initial snapshot
             self._start_snapshot_thread()    # refresh every _state_interval seconds
-
-    def on_reconcile_completed(self):
-        """Nautilus calls this after startup reconciliation (position/order state sync with IB).
-        This is the right time to check for pre-existing positions that need stop-loss attachment.
-        However, indicators may not be warm yet — defer to the first warm signal eval."""
-        self._stops_pending_on_warm = True
-        self.log.info("Reconciliation complete — will attach stops to pre-existing positions after warmup")
 
     def on_stop(self):
         self._snap_stop.set()                # stop the snapshot thread
