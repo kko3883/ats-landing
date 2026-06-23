@@ -14,9 +14,9 @@ Run:
     python run_live.py
 """
 import os
-import random
 import time
 
+from nautilus_trader.adapters.interactive_brokers.common import IBContract
 from nautilus_trader.adapters.interactive_brokers.config import (
     InteractiveBrokersDataClientConfig,
     InteractiveBrokersExecClientConfig,
@@ -33,34 +33,44 @@ from strategy_four_level import FourLevelConfig, FourLevelStrategy
 
 # -- Instruments (IB FX venue is IDEALPRO) --
 # v2: 15-minute bars -- sliding 1H is built internally from 4 x 15m bars.
-FX = ["EUR.USD", "AUD.JPY", "NZD.JPY"]
-BAR_TYPES = [f"{s}-15-MINUTE-MID-EXTERNAL" for s in FX]
+# Nautilus 1.227.0 needs explicit CASH contracts to find FX instruments.
+# Without load_contracts, it defaults to STK/SMART and loads nothing.
+FX_CONTRACTS = [
+    IBContract(secType="CASH", symbol="EUR", currency="USD", exchange="IDEALPRO"),
+    IBContract(secType="CASH", symbol="AUD", currency="JPY", exchange="IDEALPRO"),
+    IBContract(secType="CASH", symbol="NZD", currency="JPY", exchange="IDEALPRO"),
+]
+# Instrument IDs Nautilus resolves after loading: EUR/USD.IDEALPRO, AUD/JPY.IDEALPRO, NZD/JPY.IDEALPRO
+FX_IDS = frozenset({
+    "EUR/USD.IDEALPRO",
+    "AUD/JPY.IDEALPRO",
+    "NZD/JPY.IDEALPRO",
+})
+# The strategy receives bar_types with instrument IDs in IDEALPRO venue format
+BAR_TYPES = [
+    "EUR/USD.IDEALPRO-15-MINUTE-MID-EXTERNAL",
+    "AUD/JPY.IDEALPRO-15-MINUTE-MID-EXTERNAL",
+    "NZD/JPY.IDEALPRO-15-MINUTE-MID-EXTERNAL",
+]
 
 # 4002 = IB Gateway paper, 4001 = live. Start on paper.
 IBG_HOST = os.environ.get("IBG_HOST", "127.0.0.1")
 IBG_PORT = int(os.environ.get("IBG_PORT", "4002"))
 
-# Use a unique client ID per startup to avoid error 326 (client id already in use)
-# when the daemon restarts and the gateway still holds the old session.
-# Must be >= 1; Nautilus uses separate data + exec clients so we give each a
-# distinct ID derived from PID.
-_pid = os.getpid()
-CLIENT_ID_DATA = (_pid % 900) + 100    # 100-999 range
-CLIENT_ID_EXEC = (_pid % 900) + 101    # offset by 1 so exec ≠ data
+# Use fixed client IDs — the IB Gateway has EXISTING_SESSION_DETECTED_ACTION=primary,
+# which means it takes over stale sessions automatically. Unique IDs per restart
+# would accumulate orphaned client connections that block future reconnects.
+CLIENT_ID_DATA = 1
+CLIENT_ID_EXEC = 2
 
-# Let any stale IBKR session expire before connecting (5s grace period).
-# This reduces error 162 "TWS session connected from a different IP"
-# which happens when the old gateway session hasn't timed out yet.
-if os.environ.get("ATS_STARTUP_DELAY") not in ("0", "false", "no"):
-    print(f"[ats-fx-daemon] Waiting 5s for stale IBKR sessions to expire...")
-    time.sleep(5)
+print(f"[ats-fx-daemon] Waiting 5s for gateway stabilisation...")
+time.sleep(5)
 
 instrument_provider = InteractiveBrokersInstrumentProviderConfig(
-    load_ids=frozenset(FX),
+    load_ids=FX_IDS,
+    load_contracts=frozenset(FX_CONTRACTS),
 )
 
-# Connection timeout: fail fast (15s) instead of hanging forever.
-# Nautilus defaults can be very high — explicit timeout prevents zombie state.
 data_client = InteractiveBrokersDataClientConfig(
     ibg_host=IBG_HOST,
     ibg_port=IBG_PORT,
@@ -80,14 +90,14 @@ strategy = FourLevelStrategy(
     FourLevelConfig(
         bar_types=BAR_TYPES,
         position_sizes={
-            "EUR.USD": 100_000,
-            "AUD.JPY": 250_000,
-            "NZD.JPY": 250_000,
+            "EUR/USD.IDEALPRO": 100_000,
+            "AUD/JPY.IDEALPRO": 250_000,
+            "NZD/JPY.IDEALPRO": 250_000,
         },
         atr_multipliers={
-            "EUR.USD": 5.0,
-            "AUD.JPY": 10.0,
-            "NZD.JPY": 10.0,
+            "EUR/USD.IDEALPRO": 5.0,
+            "AUD/JPY.IDEALPRO": 10.0,
+            "NZD/JPY.IDEALPRO": 10.0,
         },
     )
 )
@@ -106,7 +116,7 @@ node.trader.add_strategy(strategy)
 
 
 if __name__ == "__main__":
-    print(f"[ats-fx-daemon] Starting with data_client_id={CLIENT_ID_DATA} exec_client_id={CLIENT_ID_EXEC}")
+    print(f"[ats-fx-daemon] Fixed client IDs: data={CLIENT_ID_DATA}, exec={CLIENT_ID_EXEC}")
     node.build()
     try:
         node.run()
