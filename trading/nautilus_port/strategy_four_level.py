@@ -615,7 +615,6 @@ class FourLevelStrategy(Strategy):
             trigger_type=TriggerType.BID_ASK,
             time_in_force=self.config.stop_tif,
             reduce_only=True,
-            position_id=pos.id,  # use strategy-managed position_id, not EXTERNAL
         )
         entry_px = float(pos.avg_px_open)
         stop_px = round(entry_px - offset, instrument.price_precision) if net > 0 else round(entry_px + offset, instrument.price_precision)
