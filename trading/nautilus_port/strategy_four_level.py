@@ -99,6 +99,7 @@ class _InstState:
         "sma20", "sma50", "ema20", "ema50", "rsi", "atr",
         "prev_s20", "prev_s50",
         "stop_attached",
+        "stop_price",
         # Fast-trigger (15m) indicators — fed actual 15m bars
         "ft_ema",               # ExponentialMovingAverage on 15m closes
         "ft_rsi",               # RelativeStrengthIndex on 15m closes
@@ -131,6 +132,7 @@ class _InstState:
         self.prev_s20: float | None = None
         self.prev_s50: float | None = None
         self.stop_attached: bool = False
+        self.stop_price: float = 0.0        # trailing stop trigger price (for /status display)
         # Fast trigger (15m)
         self.ft_ema = ExponentialMovingAverage(ft_ema_period)
         self.ft_rsi = RelativeStrengthIndex(rsi_period)
@@ -624,6 +626,14 @@ class FourLevelStrategy(Strategy):
             time_in_force=self.config.stop_tif,
             reduce_only=True,
         )
+        # Compute and store stop trigger price for /status display.
+        # The trailing stop order's trigger_price is not always introspectable via
+        # the generic cache, so we track it here in _InstState.
+        pos = self._open_position(iid)
+        if pos is not None:
+            entry_px = float(pos.avg_px_open)
+            stop_px = round(entry_px - offset, instrument.price_precision) if net > 0 else round(entry_px + offset, instrument.price_precision)
+            st.stop_price = stop_px
         st.stop_attached = True
         self.submit_order(trailing)
         self.log.info(f"Trailing stop attached {iid}: offset {offset} ({mult}x ATR)")
@@ -732,11 +742,11 @@ class FourLevelStrategy(Strategy):
                     "size": str(pos.quantity),
                     "entry": str(pos.avg_px_open),
                 })
-            stops = {}
-            for o in self.cache.orders_open():
-                tp = getattr(o, "trigger_price", None)
-                if tp is not None:
-                    stops[str(o.instrument_id)] = str(tp)
+            stops = {
+                str(iid): str(st.stop_price)
+                for iid, st in self._state.items()
+                if st.stop_attached and st.stop_price != 0.0
+            }
             account = []
             try:
                 # The IB account is under the "IB" venue, not IDEALPRO — read all accounts.
@@ -803,16 +813,19 @@ class FourLevelStrategy(Strategy):
                 time_in_force=self.config.stop_tif,
                 reduce_only=True,
             )
+            entry_px = float(pos.avg_px_open)
+            stop_px = round(entry_px - offset, instrument.price_precision) if net > 0 else round(entry_px + offset, instrument.price_precision)
+            st.stop_price = stop_px
             st.stop_attached = True
             self.submit_order(trailing)
             attached += 1
             self._notify(
                 f"🛡️ Attached stop to pre-existing {iid} position "
-                f"(offset {offset}, {mult}x ATR)"
+                f"(stop ~{stop_px}, {mult}x ATR)"
             )
             self.log.info(
                 f"Retroactive stop attached {iid}: offset {offset} ({mult}x ATR) "
-                f"for pre-existing position size {net}"
+                f"stop {stop_px} for pre-existing position size {net}"
             )
         if attached > 0:
             self._notify(f"🛡️ Attached protective stops to {attached} pre-existing position(s)")
