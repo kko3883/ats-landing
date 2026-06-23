@@ -11,9 +11,13 @@
 #
 # Usage: daily_cron.sh [us|hk|all]
 
-set -euo pipefail
+# set -e is intentionally OFF for cron resilience — individual steps capture
+# their own exit codes so a single failure won't abort the whole pipeline.
+set -uo pipefail
 
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:$HOME/.local/bin"
+# Ensure the trading/ dir is importable (cron may not have it on sys.path)
+export PYTHONPATH="${PYTHONPATH:-}:$(cd "$(dirname "$0")/.." && pwd)"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
@@ -21,33 +25,41 @@ LOG_DIR="$HOME/.hermes/trading/logs"
 mkdir -p "$LOG_DIR"
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_DIR/daily_cron.log"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_DIR/daily_cron.log" || true
 }
 
 run_screener() {
     local market="$1"
+    local rc=0
     log "━━━ Running ${market^^} screener ━━━"
     cd "$SCRIPT_DIR"
-    python3 -m watchlist.screener --markets "$market" >> "$LOG_DIR/daily_cron.log" 2>&1
-    log "  ${market^^} screener complete (exit=$?)"
+    python3 -m watchlist.screener --markets "$market" >> "$LOG_DIR/daily_cron.log" 2>&1 || rc=$?
+    log "  ${market^^} screener complete (exit=$rc)"
+    return $rc
 }
 
 run_regime() {
+    local rc=0
     log "━━━ Running regime detector ━━━"
-    python3 "$SCRIPT_DIR/regime/regime_detector.py" >> "$LOG_DIR/daily_cron.log" 2>&1
-    log "  Regime detector complete (exit=$?)"
+    python3 "$SCRIPT_DIR/regime/regime_detector.py" >> "$LOG_DIR/daily_cron.log" 2>&1 || rc=$?
+    log "  Regime detector complete (exit=$rc)"
+    return $rc
 }
 
 run_portfolio_sync() {
+    local rc=0
     log "━━━ Running portfolio sync ━━━"
-    python3 "$SCRIPT_DIR/regime/sync_positions.py" >> "$LOG_DIR/daily_cron.log" 2>&1
-    log "  Portfolio sync complete (exit=$?)"
+    python3 "$SCRIPT_DIR/regime/sync_positions.py" >> "$LOG_DIR/daily_cron.log" 2>&1 || rc=$?
+    log "  Portfolio sync complete (exit=$rc)"
+    return $rc
 }
 
 run_expire() {
+    local rc=0
     log "━━━ Running signal expiry ━━━"
-    python3 "$SCRIPT_DIR/regime/expire_signals.py" >> "$LOG_DIR/daily_cron.log" 2>&1
-    log "  Signal expiry complete (exit=$?)"
+    python3 "$SCRIPT_DIR/regime/expire_signals.py" >> "$LOG_DIR/daily_cron.log" 2>&1 || rc=$?
+    log "  Signal expiry complete (exit=$rc)"
+    return $rc
 }
 
 log "========================================"

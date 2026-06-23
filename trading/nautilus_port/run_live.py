@@ -14,6 +14,8 @@ Run:
     python run_live.py
 """
 import os
+import random
+import time
 
 from nautilus_trader.adapters.interactive_brokers.config import (
     InteractiveBrokersDataClientConfig,
@@ -38,23 +40,42 @@ BAR_TYPES = [f"{s}-15-MINUTE-MID-EXTERNAL" for s in FX]
 IBG_HOST = os.environ.get("IBG_HOST", "127.0.0.1")
 IBG_PORT = int(os.environ.get("IBG_PORT", "4002"))
 
+# Use a unique client ID per startup to avoid error 326 (client id already in use)
+# when the daemon restarts and the gateway still holds the old session.
+# Must be >= 1; Nautilus uses separate data + exec clients so we give each a
+# distinct ID derived from PID.
+_pid = os.getpid()
+CLIENT_ID_DATA = (_pid % 900) + 100    # 100-999 range
+CLIENT_ID_EXEC = (_pid % 900) + 101    # offset by 1 so exec ≠ data
+
+# Let any stale IBKR session expire before connecting (5s grace period).
+# This reduces error 162 "TWS session connected from a different IP"
+# which happens when the old gateway session hasn't timed out yet.
+if os.environ.get("ATS_STARTUP_DELAY") not in ("0", "false", "no"):
+    print(f"[ats-fx-daemon] Waiting 5s for stale IBKR sessions to expire...")
+    time.sleep(5)
+
 instrument_provider = InteractiveBrokersInstrumentProviderConfig(
     load_ids=frozenset(FX),
 )
 
+# Connection timeout: fail fast (15s) instead of hanging forever.
+# Nautilus defaults can be very high — explicit timeout prevents zombie state.
 data_client = InteractiveBrokersDataClientConfig(
     ibg_host=IBG_HOST,
     ibg_port=IBG_PORT,
-    ibg_client_id=1,
+    ibg_client_id=CLIENT_ID_DATA,
     instrument_provider=instrument_provider,
+    timeout=15,
 )
 
 exec_client = InteractiveBrokersExecClientConfig(
     ibg_host=IBG_HOST,
     ibg_port=IBG_PORT,
-    ibg_client_id=1,
+    ibg_client_id=CLIENT_ID_EXEC,
     account_id=os.environ["IB_ACCOUNT_ID"],
     instrument_provider=instrument_provider,
+    timeout=15,
 )
 
 strategy = FourLevelStrategy(
@@ -87,6 +108,7 @@ node.trader.add_strategy(strategy)
 
 
 if __name__ == "__main__":
+    print(f"[ats-fx-daemon] Starting with data_client_id={CLIENT_ID_DATA} exec_client_id={CLIENT_ID_EXEC}")
     node.build()
     try:
         node.run()

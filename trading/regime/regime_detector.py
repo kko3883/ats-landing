@@ -168,14 +168,21 @@ def fetch_hyg_tlt_spread() -> dict | None:
         else:
             return None
 
-        ratio = hyg / tlt
-        current = float(ratio.iloc[-1])
-        mean = float(ratio.rolling(20).mean().iloc[-1])
-        std = float(ratio.rolling(20).std().iloc[-1])
-
-        # Guard against NaN/Inf from missing data or division by zero
         from math import isfinite
-        if not isfinite(current) or not isfinite(mean):
+
+        ratio = hyg / tlt
+        # Use last valid (non-NaN) value — yfinance can return NaN on latest bar
+        ratio_clean = ratio.dropna()
+        if ratio_clean.empty or len(ratio_clean) < 22:
+            return None
+        current = float(ratio_clean.iloc[-1])
+        if not isfinite(current):
+            return None
+
+        mean = float(ratio_clean.rolling(20).mean().iloc[-1])
+        std = float(ratio_clean.rolling(20).std().iloc[-1])
+
+        if not isfinite(mean):
             return None
         if std == 0 or not isfinite(std):
             return {"ratio": round(current, 4), "zscore": 0, "wide": False}
@@ -183,12 +190,9 @@ def fetch_hyg_tlt_spread() -> dict | None:
         zscore = (current - mean) / std
         if not isfinite(zscore):
             return None
-        # Negative zscore = ratio falling = HYG underperforming TLT = credit stress
-        wide = zscore < -1.5  # >1.5σ below 20-day mean = stress signal
+        wide = zscore < -1.5
         ratio_val = round(current, 4)
         zscore_val = round(zscore, 2)
-        if not isfinite(ratio_val) or not isfinite(zscore_val):
-            return None
         return {"ratio": ratio_val, "zscore": zscore_val, "wide": wide}
     except Exception as e:
         print(f"  HYG-TLT failed: {e}")
