@@ -66,7 +66,6 @@ data_client = InteractiveBrokersDataClientConfig(
     ibg_port=IBG_PORT,
     ibg_client_id=CLIENT_ID_DATA,
     instrument_provider=instrument_provider,
-    timeout=15,
 )
 
 exec_client = InteractiveBrokersExecClientConfig(
@@ -75,7 +74,6 @@ exec_client = InteractiveBrokersExecClientConfig(
     ibg_client_id=CLIENT_ID_EXEC,
     account_id=os.environ["IB_ACCOUNT_ID"],
     instrument_provider=instrument_provider,
-    timeout=15,
 )
 
 strategy = FourLevelStrategy(
