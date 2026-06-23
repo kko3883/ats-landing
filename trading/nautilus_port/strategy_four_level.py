@@ -158,7 +158,6 @@ class FourLevelStrategy(Strategy):
         self._state_interval = int(os.environ.get("STATE_INTERVAL_SECS", "30"))
         self._snap_stop = threading.Event()
         self._snap_thread = None
-        self._stops_pending_on_warm: bool = True   # always true on startup — attach stops on first warm eval
         # Observability counters (added to state.json, non-breaking)
         self._counters: dict[str, int] = {
             "evals_total": 0,
@@ -195,6 +194,27 @@ class FourLevelStrategy(Strategy):
         if self._state_path:
             self._write_state()              # initial snapshot
             self._start_snapshot_thread()    # refresh every _state_interval seconds
+
+        # Close any EXTERNAL positions reconciled from IB — Nautilus NETTING OMS
+        # refuses to attach stop orders to EXTERNAL position IDs. By closing now,
+        # the strategy will re-enter on the next signal with proper strategy-managed
+        # IDs that accept trailing stops.
+        self._close_external_positions()
+
+    def _close_external_positions(self):
+        """Close positions with EXTERNAL IDs so the strategy can re-enter with
+        proper IDs that accept trailing stops. Runs once at startup after
+        reconciliation completes."""
+        closed = 0
+        for pos in self.cache.positions_open():
+            pid = str(pos.id)
+            if "-EXTERNAL" in pid.upper():
+                self.log.info(f"Closing EXTERNAL position {pid} ({pos.instrument_id})")
+                self._notify(f"🔄 Closing reconciled position {pos.instrument_id} (will re-enter on signal)")
+                self.close_position(pos)
+                closed += 1
+        if closed > 0:
+            self._notify(f"🔄 Closed {closed} EXTERNAL position(s) — strategy will re-enter on signals")
 
     def on_stop(self):
         self._snap_stop.set()                # stop the snapshot thread
@@ -261,19 +281,6 @@ class FourLevelStrategy(Strategy):
         # Re-check indicator readiness after feeding (indicators may need more bars)
         if not self._indicators_ready(st):
             return
-
-        # After this instrument just warmed up, try to attach stops to any
-        # pre-existing positions. Only fire once per instrument (when is_warm
-        # flips from False → True), not on every bar evaluation — historical
-        # bars arrive in batches of 190+ and would flood retries.
-        if self._stops_pending_on_warm:
-            self._attach_stops_to_existing()
-            still_pending = any(
-                s and not s.stop_attached
-                for s in self._state.values()
-            )
-            if not still_pending:
-                self._stops_pending_on_warm = False
 
         # 6. Compute level and raw signal (EXACT same logic as original)
         level, rsi = self._compute_level(st, float(bar_1h.close))
@@ -769,40 +776,6 @@ class FourLevelStrategy(Strategy):
             os.replace(tmp, self._state_path)
         except Exception as exc:
             self.log.warning(f"state snapshot failed: {exc}")
-
-    # ── stop-loss attachment for pre-existing positions ────────────────────
-    def _attach_stops_to_existing(self):
-        """Iterate over all open positions and attach ATR trailing stops if they
-        don't already have one. Called once after the first warm evaluation
-        to cover positions that were reconciled from IB on startup (which never
-        fire on_position_opened)."""
-        attached = 0
-        for pos in self.cache.positions_open():
-            iid = pos.instrument_id
-            st = self._state.get(iid)
-            if st is None or st.stop_attached:
-                continue
-            instrument = self.cache.instrument(iid)
-            if instrument is None:
-                continue
-            net = self.portfolio.net_position(iid)
-            if net == 0:
-                continue
-            # Check that ATR is initialized (should be by the time this runs)
-            if not st.atr.initialized or st.atr.value is None or st.atr.value == 0:
-                self.log.warning(
-                    f"Cannot attach stop to pre-existing position {iid}: ATR not ready "
-                    f"(initialized={st.atr.initialized}, value={st.atr.value})"
-                )
-                continue
-            self._attach_stop(iid, st, pos, instrument, net)
-            attached += 1
-            self.log.info(
-                f"Retroactive stop attached {iid}: stop {st.stop_price} "
-                f"for pre-existing position size {net}"
-            )
-        if attached > 0:
-            self._notify(f"🛡️ Attached protective stops to {attached} pre-existing position(s)")
 
     # ── helpers ────────────────────────────────────────────────────────────
     def _open_position(self, iid: InstrumentId) -> Position | None:
