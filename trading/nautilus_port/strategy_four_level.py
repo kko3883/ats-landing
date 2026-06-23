@@ -199,8 +199,21 @@ class FourLevelStrategy(Strategy):
         for iid in self._state:
             self.cancel_all_orders(iid)
 
+    # ── historical data handler ────────────────────────────────────────────
+    def on_historical_data(self, data):
+        """Nautilus 1.227 delivers historical bars here, NOT on_bar.
+        Feed them through the same pipeline so warmup completes."""
+        from nautilus_trader.model.data import Bar
+        if hasattr(data, 'bars'):
+            for bar in data.bars:
+                if isinstance(bar, Bar):
+                    self._process_bar(bar)
+
     # ── core decision loop (v2: sliding-1H evaluation) ─────────────────────
     def on_bar(self, bar: Bar):
+        self._process_bar(bar)
+
+    def _process_bar(self, bar: Bar):
         iid = bar.bar_type.instrument_id
         st = self._state.get(iid)
         if st is None:
