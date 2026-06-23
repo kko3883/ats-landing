@@ -89,6 +89,19 @@ def set_pair(arg: str, enabled: bool) -> str:
     return f"{iid}: {'✅ enabled' if enabled else '🚫 disabled'}."
 
 
+def _fmt_quotes(s) -> list[str]:
+    quotes = s.get("quotes", {})
+    if not quotes:
+        return ["Quotes: (no data yet)"]
+    out = ["📈 Quotes (15m bar):"]
+    for pair, q in quotes.items():
+        out.append(
+            f"  {pair}: bid {q.get('bid')} / ask {q.get('ask')} "
+            f"(mid {q.get('mid')}, close {q.get('close')})"
+        )
+    return out
+
+
 def _fmt_signals(s) -> list[str]:
     out = ["Signals:"]
     sigs = s.get("signals", {})
@@ -133,6 +146,8 @@ def fmt_status(s) -> str:
     if disabled:
         lines.append("Disabled: " + ", ".join(disabled))
     lines += _fmt_balance(s)
+    lines.append("")
+    lines += _fmt_quotes(s)
     lines.append("")
     lines += _fmt_signals(s)
     lines.append("")

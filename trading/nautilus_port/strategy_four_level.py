@@ -149,12 +149,14 @@ class FourLevelStrategy(Strategy):
         self._state: dict[InstrumentId, _InstState] = {}
         self._bar_types: dict[InstrumentId, BarType] = {}
         self._latest: dict[InstrumentId, dict] = {}          # last signal per pair (for /status)
+        self._quotes: dict[InstrumentId, dict] = {}           # latest 15m bar data (rt quote proxy)
         self._state_path = os.environ.get("STATE_PATH")      # set in live deploy; unset in backtest
         self._control_path = os.environ.get("CONTROL_PATH")  # switches the Telegram bot writes
         self._trades_path = os.environ.get("TRADES_PATH")    # append-only trade log for /history
         self._state_interval = int(os.environ.get("STATE_INTERVAL_SECS", "30"))
         self._snap_stop = threading.Event()
         self._snap_thread = None
+        self._stops_pending_on_warm: bool = False  # set True after reconcile if pre-existing positions exist
         # Observability counters (added to state.json, non-breaking)
         self._counters: dict[str, int] = {
             "evals_total": 0,
@@ -192,6 +194,13 @@ class FourLevelStrategy(Strategy):
             self._write_state()              # initial snapshot
             self._start_snapshot_thread()    # refresh every _state_interval seconds
 
+    def on_reconcile_completed(self):
+        """Nautilus calls this after startup reconciliation (position/order state sync with IB).
+        This is the right time to check for pre-existing positions that need stop-loss attachment.
+        However, indicators may not be warm yet — defer to the first warm signal eval."""
+        self._stops_pending_on_warm = True
+        self.log.info("Reconciliation complete — will attach stops to pre-existing positions after warmup")
+
     def on_stop(self):
         self._snap_stop.set()                # stop the snapshot thread
         # Cancel resting working orders, but deliberately do NOT flatten:
@@ -216,10 +225,19 @@ class FourLevelStrategy(Strategy):
         if st is None:
             return
 
-        # 1. Append 15m bar to the rolling buffer
+        # 1. Capture real-time quote from the latest 15m bar (high/low/close for /status)
+        self._quotes[iid] = {
+            "bid": round(float(bar.low), 5),
+            "ask": round(float(bar.high), 5),
+            "mid": round((float(bar.high) + float(bar.low)) / 2, 5),
+            "close": round(float(bar.close), 5),
+            "ts": self.clock.utc_now().isoformat(),
+        }
+
+        # 2. Append 15m bar to the rolling buffer
         st.buffer_15m.append(bar)
 
-        # 2. Update fast-trigger (15m) indicators with the actual 15m bar
+        # 3. Update fast-trigger (15m) indicators with the actual 15m bar
         st.ft_ema.handle_bar(bar)
         st.ft_rsi.handle_bar(bar)
 
@@ -248,6 +266,12 @@ class FourLevelStrategy(Strategy):
         # Re-check indicator readiness after feeding (indicators may need more bars)
         if not self._indicators_ready(st):
             return
+
+        # After the FIRST warm evaluation, attach stops to any pre-existing positions
+        # that were reconciled from IB on startup (they missed on_position_opened).
+        if self._stops_pending_on_warm:
+            self._stops_pending_on_warm = False  # one-shot
+            self._attach_stops_to_existing()
 
         # 6. Compute level and raw signal (EXACT same logic as original)
         level, rsi = self._compute_level(st, float(bar_1h.close))
@@ -716,11 +740,13 @@ class FourLevelStrategy(Strategy):
                     account += [str(v) for v in acct.balances_total().values()]
             except Exception:
                 pass
+            quotes = {str(iid): v for iid, v in self._quotes.items()}
             ctrl = self._load_control()
             snapshot = {
                 "ts": self.clock.utc_now().isoformat(),
                 "trading_enabled": ctrl["trading_enabled"],
                 "pairs": ctrl["pairs"],
+                "quotes": quotes,
                 "signals": signals,
                 "positions": positions,
                 "stops": stops,
@@ -734,6 +760,58 @@ class FourLevelStrategy(Strategy):
             os.replace(tmp, self._state_path)
         except Exception as exc:
             self.log.warning(f"state snapshot failed: {exc}")
+
+    # ── stop-loss attachment for pre-existing positions ────────────────────
+    def _attach_stops_to_existing(self):
+        """Iterate over all open positions and attach ATR trailing stops if they
+        don't already have one. Called once after the first warm evaluation
+        to cover positions that were reconciled from IB on startup (which never
+        fire on_position_opened)."""
+        attached = 0
+        for pos in self.cache.positions_open():
+            iid = pos.instrument_id
+            st = self._state.get(iid)
+            if st is None or st.stop_attached:
+                continue
+            instrument = self.cache.instrument(iid)
+            if instrument is None:
+                continue
+            net = self.portfolio.net_position(iid)
+            if net == 0:
+                continue
+            # Check that ATR is initialized (should be by the time this runs)
+            if not st.atr.initialized or st.atr.value is None or st.atr.value == 0:
+                self.log.warning(
+                    f"Cannot attach stop to pre-existing position {iid}: ATR not ready "
+                    f"(initialized={st.atr.initialized}, value={st.atr.value})"
+                )
+                continue
+            mult = self.config.atr_multipliers.get(str(iid), 5.0)
+            offset = round(st.atr.value * mult, instrument.price_precision)
+            stop_side = OrderSide.SELL if net > 0 else OrderSide.BUY
+            trailing = self.order_factory.trailing_stop_market(
+                instrument_id=iid,
+                order_side=stop_side,
+                quantity=instrument.make_qty(int(abs(net))),
+                trailing_offset=Decimal(str(offset)),
+                trailing_offset_type=TrailingOffsetType.PRICE,
+                trigger_type=TriggerType.BID_ASK,
+                time_in_force=self.config.stop_tif,
+                reduce_only=True,
+            )
+            st.stop_attached = True
+            self.submit_order(trailing)
+            attached += 1
+            self._notify(
+                f"🛡️ Attached stop to pre-existing {iid} position "
+                f"(offset {offset}, {mult}x ATR)"
+            )
+            self.log.info(
+                f"Retroactive stop attached {iid}: offset {offset} ({mult}x ATR) "
+                f"for pre-existing position size {net}"
+            )
+        if attached > 0:
+            self._notify(f"🛡️ Attached protective stops to {attached} pre-existing position(s)")
 
     # ── helpers ────────────────────────────────────────────────────────────
     def _open_position(self, iid: InstrumentId) -> Position | None:
