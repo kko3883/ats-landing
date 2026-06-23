@@ -199,11 +199,17 @@ class FourLevelStrategy(Strategy):
         for iid in self._state:
             self.cancel_all_orders(iid)
 
-    # ── handler that catches ALL bar data (streaming + historical) ─────────
+    # ── handlers that catch ALL bar data (streaming + historical) ──────────
+    def on_data(self, data):
+        """Nautilus 1.227 delivers historical bar batches through on_data() with
+        a .bars attribute. Feed every bar into the processing pipeline."""
+        if hasattr(data, "bars"):
+            for bar in data.bars:
+                if isinstance(bar, Bar):
+                    self._process_bar(bar)
+
     def on_bar(self, bar: Bar):
-        """Called for every 15m bar — both historical prefill and live streaming.
-        Nautilus 1.227 feeds historical bars one-by-one through on_bar after
-        retrieval, so a separate on_historical_data isn't needed."""
+        """Called for live streaming 15m bars after subscription is active."""
         self._process_bar(bar)
 
     def _process_bar(self, bar: Bar):
