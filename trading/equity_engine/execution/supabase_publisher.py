@@ -147,6 +147,132 @@ def _housekeep(keep: int = 500):
         pass  # Non-critical
 
 
+def publish_activity(
+    event_type: str,
+    message: str,
+    symbol: str | None = None,
+    detail: dict | None = None,
+) -> bool:
+    """
+    Publish a single significant event to the equity_activity table.
+    Used for the live activity feed on the Vercel dashboard.
+    
+    Args:
+        event_type: signal_fired / entry_blocked / entry_confirmed / 
+                    exit_triggered / regime_change / engine_started /
+                    engine_paused / engine_resumed
+        message: Human-readable description
+        symbol: Ticker symbol (nullable for engine/regime events)
+        detail: Extra structured data (prob, price, reason, etc.)
+    
+    Returns True on success, False on failure (fire-and-forget).
+    """
+    row = {
+        "event_type": event_type,
+        "symbol": symbol,
+        "message": message,
+        "detail_json": _sanitize(detail or {}),
+    }
+    
+    try:
+        url = f"{REST_URL}/equity_activity"
+        data = json.dumps(row).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers=_headers(),
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=5)
+        return True
+    except Exception as e:
+        logger.debug(f"Activity publish failed: {e}")
+        return False
+
+
+def upsert_shortlist(
+    symbol: str,
+    current_price: float | None = None,
+    sma200: float | None = None,
+    price_vs_sma200_pct: float | None = None,
+    xgb_prob: float | None = None,
+    prob_vs_threshold: float | None = None,
+    rsi_14: float | None = None,
+    atr_pct: float | None = None,
+    vwap_distance_pct: float | None = None,
+    volume_zscore: float | None = None,
+    approved: bool = False,
+    status: str = "evaluating",
+    block_reason: str | None = None,
+    recent_snapshots: list[dict] | None = None,
+) -> bool:
+    """
+    Upsert a single symbol's shortlist data into equity_shortlist.
+    Uses POST with Prefer: resolution=merge-duplicates so one row per symbol.
+    
+    Returns True on success.
+    """
+    row = {
+        "symbol": symbol,
+        "current_price": round(current_price, 2) if current_price is not None else None,
+        "sma200": round(sma200, 2) if sma200 is not None else None,
+        "price_vs_sma200_pct": round(price_vs_sma200_pct, 2) if price_vs_sma200_pct is not None else None,
+        "xgb_prob": round(xgb_prob, 4) if xgb_prob is not None else None,
+        "prob_vs_threshold": round(prob_vs_threshold, 4) if prob_vs_threshold is not None else None,
+        "rsi_14": round(rsi_14, 2) if rsi_14 is not None else None,
+        "atr_pct": round(atr_pct, 4) if atr_pct is not None else None,
+        "vwap_distance_pct": round(vwap_distance_pct, 4) if vwap_distance_pct is not None else None,
+        "volume_zscore": round(volume_zscore, 2) if volume_zscore is not None else None,
+        "approved": approved,
+        "status": status,
+        "block_reason": block_reason or None,
+        "recent_snapshots": _sanitize(list(recent_snapshots or [])[-10:]),
+        "last_evaluated": datetime.now(timezone.utc).isoformat(),
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+    }
+    
+    row = _sanitize(row)
+    
+    try:
+        url = f"{REST_URL}/equity_shortlist"
+        # Use upsert by symbol (unique constraint)
+        headers = _headers()
+        headers["Prefer"] = "resolution=merge-duplicates"
+        data = json.dumps(row).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        urllib.request.urlopen(req, timeout=10)
+        return True
+    except Exception as e:
+        logger.debug(f"Shortlist upsert failed for {symbol}: {e}")
+        return False
+
+
+def housekeep_activity(keep: int = 200):
+    """Delete oldest activity rows above keep count."""
+    try:
+        key = _get_service_role_key()
+        # Get IDs to delete
+        url = (f"{REST_URL}/equity_activity"
+               f"?select=id&order=created_at.desc&limit=100000&offset=0")
+        req = urllib.request.Request(url)
+        req.add_header("apikey", key)
+        req.add_header("Authorization", f"Bearer {key}")
+        resp = urllib.request.urlopen(req, timeout=10)
+        rows = json.loads(resp.read())
+        if len(rows) > keep:
+            ids_to_delete = [r["id"] for r in rows[keep:]]
+            for batch_start in range(0, len(ids_to_delete), 50):
+                batch = ids_to_delete[batch_start:batch_start + 50]
+                ids_filter = ",".join(f"eq.{bid}" for bid in batch)
+                del_url = f"{REST_URL}/equity_activity?id=in.({','.join(str(x) for x in batch)})"
+                del_req = urllib.request.Request(del_url, method="DELETE")
+                del_req.add_header("apikey", key)
+                del_req.add_header("Authorization", f"Bearer {key}")
+                urllib.request.urlopen(del_req, timeout=15)
+    except Exception:
+        pass  # Non-critical
+
+
 def health_check() -> bool:
     """Quick check that Supabase is reachable."""
     try:

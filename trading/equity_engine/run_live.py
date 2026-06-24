@@ -51,7 +51,9 @@ from equity_engine.layer3_micro.exit_manager import ExitManager
 from equity_engine.execution.ib_bridge import IBBridge
 from equity_engine.execution.risk_controller import RiskController
 from equity_engine.execution.state_tracker import StateTracker, PositionRecord
-from equity_engine.execution.supabase_publisher import publish_engine_state
+from equity_engine.execution.supabase_publisher import (
+    publish_engine_state, publish_activity, upsert_shortlist, housekeep_activity,
+)
 
 logger = logging.getLogger("equity_engine")
 
@@ -149,6 +151,13 @@ class EquityTradingEngine:
         self._m1_count: int = 0
         self._entries_fired: int = 0
         self._exits_fired: int = 0
+        self._signals_fired: int = 0
+
+        # Shortlist & activity publishing
+        self._shortlist_snapshots: dict[str, list[dict]] = {}  # symbol → last 10 indicator snapshots
+        self._last_shortlist_publish: datetime | None = None
+        self._last_regime: str = ""
+        self._activity_housekeep_count: int = 0
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -302,6 +311,15 @@ class EquityTradingEngine:
             f"VWAP%={fv.vwap_distance_pct:.4f} vol_z={fv.volume_zscore:.2f}"
         )
 
+        # Capture shortlist snapshot for this symbol
+        self._capture_shortlist_snapshot(
+            sym=sym, price=float(bar.close), prob=result.probability,
+            rsi=fv.rsi_14, atr_pct=fv.atr_pct,
+            vwap_pct=fv.vwap_distance_pct, vol_z=fv.volume_zscore,
+            approved=(sym in self._approved),
+            is_held=self._state.is_held(sym),
+        )
+
         if result.exceeds_threshold and self._atr15.get(sym, 0) > 0:
             await self._generate_entry(sym, result.probability, float(bar.close),
                                        self._atr15[sym], bar)
@@ -409,12 +427,27 @@ class EquityTradingEngine:
         if order is None:
             return
 
+        # Publish signal_fired activity event
+        publish_activity(
+            event_type="signal_fired",
+            symbol=sym,
+            message=f"Signal: {sym} prob={prob:.2%} @ ${price:.2f}",
+            detail={"prob": round(prob, 4), "price": round(price, 2)},
+        )
+
         risk_check = self._risk_ctrl.check_entry(
             sym, order.entry_price, order.stop_loss,
             order.quantity, self._state.position_count,
         )
         if not risk_check.allowed:
             logger.info(f"Entry blocked {sym}: {risk_check.reason}")
+            publish_activity(
+                event_type="entry_blocked",
+                symbol=sym,
+                message=f"Blocked: {sym} — {risk_check.reason}",
+                detail={"prob": round(prob, 4), "price": round(price, 2),
+                        "reason": risk_check.reason},
+            )
             return
 
         qty = risk_check.adjusted_quantity
@@ -430,21 +463,50 @@ class EquityTradingEngine:
                     f"@ {order.entry_price:.2f} SL={order.stop_loss:.2f} "
                     f"prob={prob:.2%}"
                 )
+                publish_activity(
+                    event_type="entry_confirmed",
+                    symbol=sym,
+                    message=f"ENTRY: {sym} {order.side} {qty}sh @ ${order.entry_price:.2f}",
+                    detail={"prob": round(prob, 4), "price": round(order.entry_price, 2),
+                            "qty": qty, "stop": round(order.stop_loss, 2),
+                            "status": confirm.status},
+                )
                 if confirm.status == "FILLED":
                     self._register_entry(sym, confirm.fill_price, order.stop_loss,
                                          qty, atr)
             else:
                 logger.error(f"Entry rejected: {sym} — {confirm.message}")
+                publish_activity(
+                    event_type="entry_blocked",
+                    symbol=sym,
+                    message=f"Rejected: {sym} — {confirm.message}",
+                    detail={"prob": round(prob, 4), "reason": confirm.message},
+                )
         else:
             self._entries_fired += 1
+            self._signals_fired += 1
             logger.info(
                 f"▶ SIGNAL (no-execute): {sym} {order.side} {qty}sh "
                 f"@ {price:.2f} SL={order.stop_loss:.2f} prob={prob:.2%}"
+            )
+            publish_activity(
+                event_type="entry_confirmed",
+                symbol=sym,
+                message=f"SIGNAL (no-exec): {sym} {order.side} {qty}sh @ ${price:.2f} prob={prob:.2%}",
+                detail={"prob": round(prob, 4), "price": round(price, 2),
+                        "qty": qty, "stop": round(order.stop_loss, 2)},
             )
 
     async def _execute_exit(self, exit_order):
         """Submit an exit order."""
         self._exits_fired += 1
+        publish_activity(
+            event_type="exit_triggered",
+            symbol=exit_order.symbol,
+            message=f"EXIT: {exit_order.symbol} — {exit_order.exit_reason}",
+            detail={"price": round(exit_order.exit_price, 2) if exit_order.exit_price else None,
+                    "qty": exit_order.quantity, "reason": exit_order.exit_reason},
+        )
         if self._execute:
             confirm = await self._ib.place_market_order(
                 exit_order.symbol, exit_order.side, exit_order.quantity,
@@ -487,23 +549,118 @@ class EquityTradingEngine:
         except Exception:
             pass
 
+    def _capture_shortlist_snapshot(self, sym: str, price: float, prob: float,
+                                     rsi: float, atr_pct: float, vwap_pct: float,
+                                     vol_z: float, approved: bool, is_held: bool):
+        """Buffer the latest indicator snapshot for a symbol (for shortlist)."""
+        if sym not in self._shortlist_snapshots:
+            self._shortlist_snapshots[sym] = []
+        snap = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "price": round(price, 2),
+            "prob": round(prob, 4),
+            "rsi": round(rsi, 2),
+            "atr_pct": round(atr_pct, 4),
+            "vwap_pct": round(vwap_pct, 4),
+            "vol_z": round(vol_z, 2),
+            "approved": approved,
+            "is_held": is_held,
+        }
+        self._shortlist_snapshots[sym].append(snap)
+        # Keep last 10 snapshots
+        if len(self._shortlist_snapshots[sym]) > 10:
+            self._shortlist_snapshots[sym].pop(0)
+
+    def _publish_shortlist_batch(self):
+        """Publish shortlist data for all symbols that have snapshots (every 15 min)."""
+        threshold = self._cfg.layer2.entry_prob_threshold
+        for sym, snaps in self._shortlist_snapshots.items():
+            if not snaps:
+                continue
+            last = snaps[-1]
+            prob = last.get("prob", 0)
+            is_held = last.get("is_held", False)
+            approved = last.get("approved", False)
+            prob_vs = prob - threshold if prob is not None else 0
+
+            # Determine status
+            if is_held:
+                status = "entered"
+                block_reason = None
+            elif prob >= threshold:
+                status = "ready"
+                block_reason = None
+            elif not approved:
+                status = "evaluating"
+                block_reason = "Below SMA200"
+            else:
+                status = "evaluating"
+                block_reason = f"Prob {prob:.2%} < {threshold:.0%}"
+
+            upsert_shortlist(
+                symbol=sym,
+                current_price=last.get("price"),
+                sma200=round(self._sma200.get(sym), 2) if sym in self._sma200 else None,
+                price_vs_sma200_pct=(
+                    round((last["price"] / self._sma200[sym] - 1) * 100, 2)
+                    if sym in self._sma200 and self._sma200[sym] > 0 and last.get("price")
+                    else None
+                ),
+                xgb_prob=prob,
+                prob_vs_threshold=round(prob_vs, 4),
+                rsi_14=last.get("rsi"),
+                atr_pct=last.get("atr_pct"),
+                vwap_distance_pct=last.get("vwap_pct"),
+                volume_zscore=last.get("vol_z"),
+                approved=approved,
+                status=status,
+                block_reason=block_reason,
+                recent_snapshots=snaps,
+            )
+
     def _publish_to_supabase(self):
-        """Publish engine state to Supabase for the Vercel dashboard."""
+        """Publish engine state to Supabase for the Vercel dashboard.
+        Also handles: regime change detection, periodic shortlist upsert, 
+        and activity housekeeping."""
         try:
             regime = self._regime_client.fetch_regime()
+
+            # Detect regime changes and publish activity
+            if self._last_regime and regime.regime_name != self._last_regime:
+                publish_activity(
+                    event_type="regime_change",
+                    message=f"Regime: {self._last_regime} → {regime.regime_name}",
+                    detail={"from": self._last_regime, "to": regime.regime_name},
+                )
+            self._last_regime = regime.regime_name
+
             publish_engine_state(
                 equity=self._risk_ctrl.portfolio_equity,
-                starting_equity=100_000.0,  # TODO: capture actual starting equity
+                starting_equity=100_000.0,
                 position_count=self._state.position_count,
                 trade_count=self._state.trade_count,
                 paused=self._risk_ctrl.is_paused,
                 regime=regime.regime_name,
                 layer1_approved=len(self._approved),
-                layer2_signals=0,  # aggregated below
+                layer2_signals=self._signals_fired,
                 layer2_features=self._m15_count,
                 layer3_exits=self._exits_fired,
                 positions=self._state.all_positions,
             )
+
+            # Periodic shortlist publish (every 15 minutes)
+            now = datetime.now(timezone.utc)
+            if (self._last_shortlist_publish is None or
+                    (now - self._last_shortlist_publish).total_seconds() >= 900):
+                self._publish_shortlist_batch()
+                self._last_shortlist_publish = now
+
+            # Housekeep activity table (every 50 publishes ≈ 25 min)
+            self._activity_housekeep_count += 1
+            if self._activity_housekeep_count >= 50:
+                housekeep_activity(keep=200)
+                self._activity_housekeep_count = 0
+
         except Exception:
             pass  # Supabase publish is fire-and-forget
 
