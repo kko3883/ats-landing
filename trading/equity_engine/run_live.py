@@ -252,7 +252,10 @@ class EquityTradingEngine:
                 await asyncio.sleep(1)
 
     async def _handle_m15_bar(self, bar: Bar):
-        """Process a 15-minute bar: Layer 2 evaluation."""
+        """Process a 15-minute bar: Layer 2 evaluation.
+
+        Compute indicators + XGBoost for ALL symbols with warm buffers
+        (captured to shortlist). Entry generation is gated behind L1 + regime."""
         self._m15_count += 1
         sym = bar.symbol
 
@@ -273,20 +276,7 @@ class EquityTradingEngine:
             self._last_daily_run = bar.timestamp
             self._update_daily_sma()
 
-        # Regime check
-        regime = self._regime_client.fetch_regime()
-        if not regime.allow_new_entries:
-            return
-
-        # Skip if not approved (Layer 1)
-        if sym not in self._approved:
-            return
-
-        # Skip if already holding
-        if self._state.is_held(sym):
-            return
-
-        # Feature computation
+        # Compute features for ALL symbols (for shortlist visibility)
         bars = self._m15_buffers[sym]
         closes = np.array([b.close for b in bars], dtype=float)
         highs = np.array([b.high for b in bars], dtype=float)
@@ -302,16 +292,17 @@ class EquityTradingEngine:
         if len(highs) >= 15:
             self._atr15[sym] = compute_atr(highs, lows, closes, period=14)
 
-        # XGBoost inference
+        # XGBoost inference (for all symbols, even if below SMA200)
         result = self._xgb.predict(fv.to_array())
 
         logger.debug(
             f"M15 {sym}: price={bar.close:.2f} prob={result.probability:.3f} "
             f"RSI={fv.rsi_14:.1f} ATR%={fv.atr_pct:.4f} "
-            f"VWAP%={fv.vwap_distance_pct:.4f} vol_z={fv.volume_zscore:.2f}"
+            f"VWAP%={fv.vwap_distance_pct:.4f} vol_z={fv.volume_zscore:.2f} "
+            f"approved={sym in self._approved}"
         )
 
-        # Capture shortlist snapshot for this symbol
+        # Capture shortlist snapshot for EVERY symbol with warm data
         self._capture_shortlist_snapshot(
             sym=sym, price=float(bar.close), prob=result.probability,
             rsi=fv.rsi_14, atr_pct=fv.atr_pct,
@@ -319,6 +310,15 @@ class EquityTradingEngine:
             approved=(sym in self._approved),
             is_held=self._state.is_held(sym),
         )
+
+        # ── Entry gating (only for L1-approved, regime-ok, non-held) ──
+        regime = self._regime_client.fetch_regime()
+        if not regime.allow_new_entries:
+            return
+        if sym not in self._approved:
+            return
+        if self._state.is_held(sym):
+            return
 
         if result.exceeds_threshold and self._atr15.get(sym, 0) > 0:
             await self._generate_entry(sym, result.probability, float(bar.close),

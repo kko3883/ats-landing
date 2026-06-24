@@ -137,6 +137,7 @@ export default function EquityDashboard() {
   const [equityHistory, setEquityHistory] = useState([])
   const [expandedSymbol, setExpandedSymbol] = useState(null)
   const [activeTab, setActiveTab] = useState('activity') // activity | shortlist | positions
+  const [shortlistFilter, setShortlistFilter] = useState('all') // all | approved | ready | entered
   const activityEndRef = useRef(null)
 
   // ── Subscriptions & data fetching ──────────────────────────────────
@@ -433,8 +434,14 @@ export default function EquityDashboard() {
               <div style={{ fontSize: 20, fontWeight: 700, color: '#8b949e' }}>{universeSize}</div>
             </div>
             <div style={{ color: '#30363d', fontSize: 18, margin: '0 4px' }}>→</div>
-            {/* L1 Approved */}
-            <div style={{ flex: '0 0 auto', textAlign: 'center', padding: '8px 14px', borderRadius: 8, background: 'rgba(88,166,255,0.08)', minWidth: 70 }}>
+            {/* L1 Approved — click to show all approved stocks */}
+            <div style={{ flex: '0 0 auto', textAlign: 'center', padding: '8px 14px', borderRadius: 8, background: 'rgba(88,166,255,0.08)', minWidth: 70, cursor: 'pointer' }}
+              onClick={() => {
+                setShortlistOpen(true)
+                setActiveTab('shortlist')
+                setShortlistFilter('approved')
+                if (shortlist.length === 0) fetchShortlist()
+              }}>
               <div style={{ fontSize: 9, color: '#58a6ff', textTransform: 'uppercase', marginBottom: 2 }}>L1 Approved</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: '#58a6ff' }}>{layer1Approved}</div>
               <div style={{ fontSize: 9, color: '#8b949e', marginTop: 1 }}>SMA200 ↑</div>
@@ -576,11 +583,29 @@ export default function EquityDashboard() {
               background: '#161b22', border: '1px solid #30363d', borderRadius: 12,
               overflow: 'hidden'
             }}>
-              {/* Summary bar */}
-              <div style={{ padding: '10px 16px', display: 'flex', gap: 16, alignItems: 'center', borderBottom: '1px solid #30363d' }}>
-                <span style={{ fontSize: 11, color: '#8b949e' }}>
-                  {readyCount} ready · {enteredCount} entered · {shortlist.length - readyCount - enteredCount} evaluating
+              {/* Summary bar + filter tabs */}
+              <div style={{ padding: '8px 16px', display: 'flex', gap: 8, alignItems: 'center', borderBottom: '1px solid #30363d', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 10, color: '#8b949e' }}>
+                  {readyCount} ready · {enteredCount} entered · {shortlist.length - readyCount - enteredCount - blockedCount} evaluating
                 </span>
+                <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
+                  {[
+                    { id: 'all', label: 'All', count: shortlist.length },
+                    { id: 'approved', label: 'L1 ✓', count: shortlist.filter(r => r.approved).length },
+                    { id: 'ready', label: 'L2 Ready', count: readyCount },
+                    { id: 'entered', label: 'Active', count: enteredCount },
+                  ].map(f => (
+                    <div key={f.id} onClick={() => setShortlistFilter(f.id)} style={{
+                      fontSize: 9, padding: '2px 8px', borderRadius: 10, cursor: 'pointer',
+                      background: shortlistFilter === f.id ? 'rgba(88,166,255,0.2)' : '#21262d',
+                      color: shortlistFilter === f.id ? '#58a6ff' : '#8b949e',
+                      border: shortlistFilter === f.id ? '1px solid rgba(88,166,255,0.3)' : '1px solid transparent',
+                      transition: 'all 0.15s',
+                    }}>
+                      {f.label} {f.count}
+                    </div>
+                  ))}
+                </div>
                 <button onClick={fetchShortlist} disabled={shortlistLoading}
                   style={{
                     marginLeft: 'auto', fontSize: 10, padding: '4px 10px', borderRadius: 6,
@@ -603,7 +628,18 @@ export default function EquityDashboard() {
                 </div>
               )}
 
-              {shortlist.length > 0 && (
+              {(() => {
+                // Apply filter
+                const filtered = shortlist.filter(r => {
+                  if (shortlistFilter === 'approved') return r.approved === true
+                  if (shortlistFilter === 'ready') return r.status === 'ready'
+                  if (shortlistFilter === 'entered') return r.status === 'entered'
+                  return true // 'all'
+                })
+                if (filtered.length === 0) {
+                  return <div style={{ padding: 30, textAlign: 'center', color: '#8b949e' }}>No stocks match this filter.</div>
+                }
+                return (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                     <thead>
@@ -706,7 +742,7 @@ export default function EquityDashboard() {
                     </tbody>
                   </table>
                 </div>
-              )}
+            )})()}
             </div>
           )}
 
