@@ -295,6 +295,7 @@ export default function EquityDashboard() {
   const layer2Signals = s.layer2_signals || 0
   const layer2Features = s.layer2_features || 0
   const layer3Exits = s.layer3_exits || 0
+  const universeCount = s.universe_count || 50
 
   // Parse positions
   let positions = {}
@@ -307,7 +308,7 @@ export default function EquityDashboard() {
   const readyCount = shortlist.filter(r => r.status === 'ready').length
   const enteredCount = shortlist.filter(r => r.status === 'entered').length
   const blockedCount = shortlist.filter(r => r.status !== 'ready' && r.status !== 'entered').length
-  const universeSize = shortlist.length || (s.layer1_approved || 0) + 5
+  const universeSize = universeCount
 
   const regimeStyles = {
     risk_on: { border: '1px solid rgba(63,185,80,0.4)', bg: 'rgba(63,185,80,0.1)', text: '#3fb950', dot: '#3fb950', label: 'Risk-On', icon: '🟢' },

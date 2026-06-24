@@ -646,6 +646,7 @@ class EquityTradingEngine:
                 layer2_features=self._m15_count,
                 layer3_exits=self._exits_fired,
                 positions=self._state.all_positions,
+                universe_count=len(self._universe.get_candidates()),
             )
 
             # Periodic shortlist publish (every 5 minutes)
