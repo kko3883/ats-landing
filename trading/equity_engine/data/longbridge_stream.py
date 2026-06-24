@@ -39,7 +39,7 @@ class Bar:
     @classmethod
     def from_longbridge_candle(cls, symbol: str, period: str, candle: dict) -> "Bar":
         """Parse a Longbridge candlestick dict into a normalized Bar."""
-        ts = candle.get("timestamp")
+        ts = candle.get("timestamp") or candle.get("time")
         if isinstance(ts, (int, float)):
             ts = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
         elif isinstance(ts, str):
@@ -245,55 +245,73 @@ class LongbridgeStreamer:
         """
         Fallback: poll Longbridge CLI kline endpoint at the bar interval.
         Deduplicates bars by timestamp.  Works without the SDK.
+        Uses async subprocess to avoid blocking the event loop.
         """
-        import subprocess
-
         # Period → poll interval in seconds
         poll_intervals = {
             "1m": 60,
             "15m": 900,
-            "1d": 3600,  # hourly check for new daily bar
+            "1d": 86400,  # once daily
         }
 
         last_ts: dict[str, dict[str, datetime]] = {}  # symbol:period → last bar ts
+        first_fetch: set[str] = set()  # track first-ever poll per symbol×period
+
+        # Interleave symbols so bars arrive gradually, not in huge batches
+        async def _poll_one(symbol, period_str):
+            key = f"{symbol}:{period_str}"
+            is_first = key not in first_fetch
+            if is_first:
+                first_fetch.add(key)
+            count = "50" if is_first else "3"  # backfill on first poll
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "longbridge", "kline", symbol,
+                    "--period", period_str,
+                    "--count", count,
+                    "--format", "json",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+                if proc.returncode != 0:
+                    return
+                data = json.loads(stdout)
+                if not data:
+                    return
+
+                for candle in data:
+                    bar = Bar.from_longbridge_candle(symbol, period_str, candle)
+                    last = last_ts[symbol].get(period_str)
+                    if last is None or bar.timestamp > last:
+                        last_ts[symbol][period_str] = bar.timestamp
+                        try:
+                            self._queue.put_nowait(bar)
+                        except asyncio.QueueFull:
+                            logger.warning(
+                                f"Queue full, dropping bar: {symbol} {period_str}"
+                            )
+            except asyncio.TimeoutError:
+                logger.debug(f"CLI timeout {symbol} {period_str}")
+            except Exception as e:
+                logger.debug(f"CLI poll error {symbol} {period_str}: {e}")
 
         while self._running:
+            # Poll 1 symbol at a time, yielding to event loop between each
             for symbol in self._config.symbols:
+                if not self._running:
+                    break
                 if symbol not in last_ts:
                     last_ts[symbol] = {}
 
                 for period_str in self._config.periods:
-                    try:
-                        result = subprocess.run(
-                            [
-                                "longbridge", "kline", symbol,
-                                "--period", period_str,
-                                "--count", "3",
-                                "--format", "json",
-                            ],
-                            capture_output=True, text=True, timeout=15,
-                        )
-                        if result.returncode != 0:
-                            continue
-                        data = json.loads(result.stdout)
-                        if not data:
-                            continue
+                    if not self._running:
+                        break
+                    await _poll_one(symbol, period_str)
+                    # Small yield between symbols to let main loop consume bars
+                    await asyncio.sleep(0.5)
 
-                        for candle in data:
-                            bar = Bar.from_longbridge_candle(symbol, period_str, candle)
-                            last = last_ts[symbol].get(period_str)
-                            if last is None or bar.timestamp > last:
-                                last_ts[symbol][period_str] = bar.timestamp
-                                try:
-                                    self._queue.put_nowait(bar)
-                                except asyncio.QueueFull:
-                                    logger.warning(
-                                        f"Queue full, dropping bar: {symbol} {period_str}"
-                                    )
-                    except Exception as e:
-                        logger.debug(f"CLI poll error {symbol} {period_str}: {e}")
-
-            # Sleep based on the fastest period requested
+            # After one full cycle, sleep based on the fastest period
             sleep_time = min(poll_intervals.get(p, 60) for p in self._config.periods)
             await asyncio.sleep(sleep_time)
 

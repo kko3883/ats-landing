@@ -648,10 +648,10 @@ class EquityTradingEngine:
                 positions=self._state.all_positions,
             )
 
-            # Periodic shortlist publish (every 15 minutes)
+            # Periodic shortlist publish (every 5 minutes)
             now = datetime.now(timezone.utc)
             if (self._last_shortlist_publish is None or
-                    (now - self._last_shortlist_publish).total_seconds() >= 900):
+                    (now - self._last_shortlist_publish).total_seconds() >= 300):
                 self._publish_shortlist_batch()
                 self._last_shortlist_publish = now
 

@@ -16,7 +16,7 @@ layer2:
   atr_period: 14
   volume_z_period: 20
   m15_buffer_bars: 500
-  m15_warmup_bars: 50
+  m15_warmup_bars: 3
 
 layer3:
   base_trail_mult: 1.5
