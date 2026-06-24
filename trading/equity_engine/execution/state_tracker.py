@@ -104,6 +104,10 @@ class StateTracker:
         return len(self._positions)
 
     @property
+    def trade_count(self) -> int:
+        return self._trade_count
+
+    @property
     def all_positions(self) -> dict[str, PositionRecord]:
         return dict(self._positions)
 

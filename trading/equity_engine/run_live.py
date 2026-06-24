@@ -661,8 +661,8 @@ class EquityTradingEngine:
                 housekeep_activity(keep=200)
                 self._activity_housekeep_count = 0
 
-        except Exception:
-            pass  # Supabase publish is fire-and-forget
+        except Exception as e:
+            logger.warning(f"Supabase publish failed: {e}")
 
 
 # ── Entrypoint ──────────────────────────────────────────────────────────────
