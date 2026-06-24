@@ -263,7 +263,11 @@ class LongbridgeStreamer:
             is_first = key not in first_fetch
             if is_first:
                 first_fetch.add(key)
-            count = "50" if is_first else "3"  # backfill on first poll
+            # D1 needs 300 for SMA(200), M15/1m need 50 for warmup
+            if period_str == "1d":
+                count = "300" if is_first else "3"
+            else:
+                count = "50" if is_first else "3"
             try:
                 proc = await asyncio.create_subprocess_exec(
                     "longbridge", "kline", symbol,
