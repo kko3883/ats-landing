@@ -107,7 +107,6 @@ def publish_engine_state(
         "layer3_exits": layer3_exits,
         "positions_json": _sanitize(dict(positions or {})),
         "trades_json": _sanitize(list(trades or [])[-20:]),
-        "universe_count": universe_count,
         "entries_today": entries_today,
         "daily_pnl": round(daily_pnl, 2),
         "snapshot_at": datetime.now(timezone.utc).isoformat(),
