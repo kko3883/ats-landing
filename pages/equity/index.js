@@ -256,12 +256,19 @@ export default function EquityDashboard() {
     }
   }, [shortlistOpen, shortlist.length, fetchShortlist])
 
-  // Auto-refresh shortlist every 15 min when open
+  // Auto-load shortlist on page load so user sees data immediately
   useEffect(() => {
-    if (!shortlistOpen) return
-    const timer = setInterval(fetchShortlist, 900000) // 15 min
+    if (connected && shortlist.length === 0) {
+      fetchShortlist()
+    }
+  }, [connected, shortlist.length, fetchShortlist])
+
+  // Auto-refresh shortlist every 5 min while page is open
+  useEffect(() => {
+    if (!connected) return
+    const timer = setInterval(fetchShortlist, 300000) // 5 min
     return () => clearInterval(timer)
-  }, [shortlistOpen, fetchShortlist])
+  }, [connected, fetchShortlist])
 
   // ── Derived data ────────────────────────────────────────────────────
 
