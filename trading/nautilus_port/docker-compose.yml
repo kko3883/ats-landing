@@ -44,9 +44,11 @@ services:
     labels:
       - "autoheal=true"              # match your existing autoheal label if it differs
     healthcheck:
-      # bash /dev/tcp probe (image is Ubuntu-based, has bash). If your image already
-      # defines a healthcheck you can delete this block.
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/4002' || exit 1"]
+      # Two-stage probe: (1) port 4002 open (IB API listener), (2) port 4004
+      # accepts a connection (socat relay responsive).  Port 4002 alone can be
+      # open even when the Java GUI thread is deadlocked (D-state); port 4004
+      # requires socat to be running AND the relay chain to be intact.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/4002' && timeout 3 bash -c 'exec 4<>/dev/tcp/127.0.0.1/4004' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5

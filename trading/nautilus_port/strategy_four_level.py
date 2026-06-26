@@ -166,6 +166,11 @@ class FourLevelStrategy(Strategy):
             "blocked_by_fast_trigger": 0,
             "entries_fired": 0,
         }
+        # Staleness watchdog — fires a single Telegram alert if no bar is
+        # processed for STALENESS_THRESHOLD_SECS, then resets when bars resume.
+        self._last_eval_utc = None          # set on first bar
+        self._staleness_alerted = False     # cooldown flag (only one alert per outage)
+        self._staleness_threshold_secs = int(os.environ.get("STALENESS_ALERT_SECS", "600"))
 
     # ── lifecycle ──────────────────────────────────────────────────────────
     def on_start(self):
@@ -204,17 +209,23 @@ class FourLevelStrategy(Strategy):
     def _close_external_positions(self):
         """Close positions with EXTERNAL IDs so the strategy can re-enter with
         proper IDs that accept trailing stops. Runs once at startup after
-        reconciliation completes."""
-        closed = 0
+        reconciliation completes.
+        
+        WARNING: NETTING OMS rejects orders with EXTERNAL position IDs.
+        Rapid-fire rejections can deadlock the IB Gateway's Java thread.
+        We log and skip — the position must be closed manually in TWS."""
+        external = []
         for pos in self.cache.positions_open():
             pid = str(pos.id)
             if "-EXTERNAL" in pid.upper():
-                self.log.info(f"Closing EXTERNAL position {pid} ({pos.instrument_id})")
-                self._notify(f"🔄 Closing reconciled position {pos.instrument_id} (will re-enter on signal)")
-                self.close_position(pos)
-                closed += 1
-        if closed > 0:
-            self._notify(f"🔄 Closed {closed} EXTERNAL position(s) — strategy will re-enter on signals")
+                external.append((pos.instrument_id, pid))
+        if external:
+            pairs = ", ".join(str(iid) for iid, _ in external)
+            self.log.warning(
+                f"Cannot close EXTERNAL position(s) with NETTING OMS: {pairs}. "
+                f"Close them manually in TWS/Gateway."
+            )
+            self._notify(f"⚠️ Unmanaged position(s) detected: {pairs} — close manually in TWS")
 
     def on_stop(self):
         self._snap_stop.set()                # stop the snapshot thread
@@ -289,6 +300,9 @@ class FourLevelStrategy(Strategy):
         # 7. Observability counters
         self._counters["evals_total"] += 1
         st.bars_since_last_entry += 1
+        # Update staleness watchdog timestamp and clear any stale alert
+        self._last_eval_utc = self.clock.utc_now()
+        self._staleness_alerted = False
 
         # 8. Update latest state per instrument (for /status)
         self._latest[iid] = {
@@ -731,9 +745,25 @@ class FourLevelStrategy(Strategy):
         """Snapshot live state to STATE_PATH for the Telegram bot. No-op if unset; never raises.
 
         v2 additions: observability counters (non-breaking — ADDED, not removed/renamed).
+        v3 addition: staleness watchdog — Telegram alert when no bars process for
+                     STALENESS_ALERT_SECS (default 600s = 10 min).
         """
         if not self._state_path:
             return
+        # ── Staleness watchdog (v3) ──────────────────────────────────────────
+        if self._last_eval_utc is not None and not self._staleness_alerted:
+            age = (self.clock.utc_now() - self._last_eval_utc).total_seconds()
+            if age > self._staleness_threshold_secs:
+                self._staleness_alerted = True
+                self.log.error(
+                    f"STALE: No bar processed in {int(age)}s "
+                    f"(threshold={self._staleness_threshold_secs}s). "
+                    f"Gateway or data feed may be frozen."
+                )
+                self._notify(
+                    f"⏰ FX ATS STALE — no data for {int(age/60)} min. "
+                    f"Gateway may be frozen. Check IB Gateway container."
+                )
         try:
             signals = {str(iid): v for iid, v in self._latest.items()}
             positions = []
