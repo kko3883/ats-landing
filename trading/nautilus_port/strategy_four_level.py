@@ -170,7 +170,7 @@ class FourLevelStrategy(Strategy):
         # processed for STALENESS_THRESHOLD_SECS, then resets when bars resume.
         self._last_eval_utc = None          # set on first bar
         self._staleness_alerted = False     # cooldown flag (only one alert per outage)
-        self._staleness_threshold_secs = int(os.environ.get("STALENESS_ALERT_SECS", "600"))
+        self._staleness_threshold_secs = int(os.environ.get("STALENESS_ALERT_SECS", "900"))
 
     # ── lifecycle ──────────────────────────────────────────────────────────
     def on_start(self):
