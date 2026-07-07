@@ -6,6 +6,9 @@ and the ATR protective stop from the original asyncio daemon into a
 NautilusTrader Strategy.
 
 v3: Correctness + stability fixes
+    - Hourly-semantics period scaling: the sliding-1H series is sampled every
+      15m, so v2 SMA20 spanned 5 hours, not 20 — all hourly indicator periods
+      are now multiplied by sliding_window_bars (scale_periods_to_hourly).
     - Warmup single-pass: kills the O(n^2) duplicate indicator feeding that
       corrupted EMA/RSI/ATR state at go-live (and in every v2 backtest).
     - Historical/live duplicate-bar guard on ts_event.
@@ -94,6 +97,16 @@ class FourLevelConfig(StrategyConfig, frozen=True):
     fast_trigger_rsi_low: int = 25
     min_bars_between_entries: int = 1
 
+    # ── Hourly-semantics period scaling (v3 fix) ──────────────────────────
+    # The sliding-1H series advances one 15m step per sample, so an SMA(20) on
+    # it spans 20 x 15m = 5 HOURS, not 20 hours — v2 silently compressed every
+    # lookback by sliding_window_bars. With this flag on (default), all hourly
+    # indicator periods are multiplied by sliding_window_bars so SMA20/50,
+    # EMA20/50, RSI14 and ATR14 keep their original hourly lookback while
+    # still being re-evaluated every 15 minutes. Set False only to reproduce
+    # the (buggy) v2 timescale for A/B comparison in backtests.
+    scale_periods_to_hourly: bool = True
+
 
 class _InstState:
     """Per-instrument indicator bundle + sliding-1H buffers + debounce state."""
@@ -127,16 +140,20 @@ class _InstState:
         buffer_maxlen: int,
         ft_ema_period: int,
         bar_type_15m: BarType,
+        period_scale: int = 1,
     ):
         self.buffer_15m: deque[Bar] = deque(maxlen=buffer_maxlen)
         self.bar_type_15m = bar_type_15m
-        # Hourly indicators (on sliding-1H)
-        self.sma20 = SimpleMovingAverage(20)
-        self.sma50 = SimpleMovingAverage(50)
-        self.ema20 = ExponentialMovingAverage(20)
-        self.ema50 = ExponentialMovingAverage(50)
-        self.rsi = RelativeStrengthIndex(rsi_period)
-        self.atr = AverageTrueRange(atr_period)
+        # Hourly indicators (on sliding-1H). period_scale restores hourly
+        # semantics: the sliding series is sampled every 15m, so periods are
+        # multiplied by sliding_window_bars (v3 fix — see FourLevelConfig).
+        k = max(1, period_scale)
+        self.sma20 = SimpleMovingAverage(20 * k)
+        self.sma50 = SimpleMovingAverage(50 * k)
+        self.ema20 = ExponentialMovingAverage(20 * k)
+        self.ema50 = ExponentialMovingAverage(50 * k)
+        self.rsi = RelativeStrengthIndex(rsi_period * k)
+        self.atr = AverageTrueRange(atr_period * k)
         self.prev_s20: float | None = None
         self.prev_s50: float | None = None
         self.stop_attached: bool = False
@@ -183,6 +200,16 @@ class FourLevelStrategy(Strategy):
 
     # ── lifecycle ──────────────────────────────────────────────────────────
     def on_start(self):
+        scale = (self.config.sliding_window_bars
+                 if self.config.scale_periods_to_hourly else 1)
+        # Slowest indicator is SMA(50 * scale); it needs that many sliding-1H
+        # samples, i.e. (50*scale + window) 15m bars of MARKET time. Convert to
+        # calendar days and add 3 days margin so a weekend gap (FX closed ~48h)
+        # cannot leave the warmup starved.
+        slowest_bars = 50 * scale + self.config.sliding_window_bars
+        market_hours = slowest_bars * self.config.bar_interval_minutes / 60
+        prefill_days = max(4, int(market_hours / 24) + 4)
+
         for bt_str in self.config.bar_types:
             bar_type = BarType.from_str(bt_str)
             iid = bar_type.instrument_id
@@ -192,15 +219,17 @@ class FourLevelStrategy(Strategy):
                 buffer_maxlen=self.config.buffer_maxlen,
                 ft_ema_period=self.config.fast_trigger_ema_period,
                 bar_type_15m=bar_type,
+                period_scale=scale,
             )
             self._state[iid] = st
             self._bar_types[iid] = bar_type
-            # Request historical 15m bars to pre-fill the buffer.
-            # 300 bars * 15 min = 75 h ≈ 3.125 days; use 4 days for safety margin.
-            prefill_start = self.clock.utc_now() - timedelta(days=4)
+            # Request historical 15m bars to pre-fill the warmup — window sized
+            # to the scaled slowest indicator (see prefill_days above).
+            prefill_start = self.clock.utc_now() - timedelta(days=prefill_days)
             self.request_bars(bar_type, start=prefill_start)
             self.subscribe_bars(bar_type)
-            self.log.info(f"Subscribed {bar_type} (15m, sliding-1H eval)")
+            self.log.info(f"Subscribed {bar_type} (15m, sliding-1H eval, "
+                          f"period_scale={scale}, prefill={prefill_days}d)")
 
         self._notify("🟢 ATS FX strategy started (paper, sliding-1H) — "
                      + ", ".join(str(i) for i in self._bar_types))

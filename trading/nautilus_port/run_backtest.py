@@ -426,6 +426,11 @@ def main():
         "--data-source", choices=["ib", "yfinance"], default="ib",
         help="Bar data source: ib (IB Gateway, default) or yfinance (fallback)",
     )
+    parser.add_argument(
+        "--no-period-scale", action="store_true",
+        help="Disable hourly-semantics period scaling (reproduces the v2 "
+             "compressed-timescale behaviour, for A/B comparison only)",
+    )
     parser.add_argument("--dump-trades", metavar="PATH",
                         help="Write order fills report to JSONL file")
     parser.add_argument("--dump-positions", metavar="PATH",
@@ -447,7 +452,8 @@ def main():
     print(f"  ATS FX Backtest - {', '.join(names)} "
           f"({args.days}d, {variant}, source={source})")
     print(f"  interval={interval}  sliding_window={sliding_window}  "
-          f"fast_trigger={fast_trigger}")
+          f"fast_trigger={fast_trigger}  "
+          f"period_scale={'OFF (v2 compressed)' if args.no_period_scale else 'hourly'}")
     if source == "ib":
         print(f"  IB Gateway: {IB_BACKTEST_HOST}:{IB_BACKTEST_PORT}  "
               f"clientId={IB_BACKTEST_CLIENT_ID}")
@@ -507,6 +513,7 @@ def main():
             },
             sliding_window_bars=sliding_window,
             fast_trigger_enabled=fast_trigger,
+            scale_periods_to_hourly=not args.no_period_scale,
         )
     )
     engine.add_strategy(strategy)
