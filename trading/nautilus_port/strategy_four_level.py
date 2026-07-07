@@ -5,6 +5,14 @@ Ports the 4-level signal engine (SMA structure -> EMA momentum -> RSI exhaustion
 and the ATR protective stop from the original asyncio daemon into a
 NautilusTrader Strategy.
 
+v3: Correctness + stability fixes
+    - Warmup single-pass: kills the O(n^2) duplicate indicator feeding that
+      corrupted EMA/RSI/ATR state at go-live (and in every v2 backtest).
+    - Historical/live duplicate-bar guard on ts_event.
+    - Debounce state now tracked on every evaluation, not only when flat.
+    - Snapshot thread no longer touches Nautilus objects (not thread-safe);
+      staleness watchdog runs on wall clock in the thread.
+
 v2: Sliding 1H evaluation + fast trigger
     - Subscribes to 15-minute bars instead of 1-hour bars.
     - Builds a trailing-60-minute (sliding) 1H bar from the last four 15m bars
@@ -38,7 +46,7 @@ import threading
 import urllib.parse
 import urllib.request
 from collections import deque
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from nautilus_trader.config import StrategyConfig
@@ -158,6 +166,7 @@ class FourLevelStrategy(Strategy):
         self._state_interval = int(os.environ.get("STATE_INTERVAL_SECS", "30"))
         self._snap_stop = threading.Event()
         self._snap_thread = None
+        self._snapshot_cache: dict = {}      # last snapshot built on the event loop
         # Observability counters (added to state.json, non-breaking)
         self._counters: dict[str, int] = {
             "evals_total": 0,
@@ -260,28 +269,28 @@ class FourLevelStrategy(Strategy):
             "ts": self.clock.utc_now().isoformat(),
         }
 
-        # 2. Append 15m bar to the rolling buffer
+        # 2. Duplicate / out-of-order guard (v3 fix) — the request_bars() history
+        #    and the live subscription can overlap by one bar. Feeding the same
+        #    bar twice corrupts the recursive indicators (EMA / RSI / ATR).
+        if st.buffer_15m and bar.ts_event <= st.buffer_15m[-1].ts_event:
+            return
+
+        # 3. Append 15m bar to the rolling buffer
         st.buffer_15m.append(bar)
 
-        # 3. Update fast-trigger (15m) indicators with the actual 15m bar
+        # 4. Update fast-trigger (15m) indicators with the actual 15m bar
         st.ft_ema.handle_bar(bar)
         st.ft_rsi.handle_bar(bar)
 
-        # 3. Warmup check — need enough 15m bars to seed the sliding-1H indicators
-        if not st.is_warm:
-            if self._check_warmup(st):
-                st.is_warm = True
-                self.log.info(f"Warmup complete for {iid} "
-                              f"(buffer: {len(st.buffer_15m)} 15m bars)")
-            else:
-                return  # still cold, silently ingest
-
-        # 4. Build sliding-1H bar from the trailing N 15m bars
+        # 5. Build the sliding-1H bar and feed the hourly indicators EXACTLY ONCE
+        #    per incoming 15m bar (v3 fix). The old _check_warmup batch loop
+        #    re-fed the ENTIRE buffer on every pre-warm bar — O(n^2) duplicate
+        #    feeds that left the recursive EMA/RSI/ATR state corrupted at go-live.
+        #    Indicators now warm in a single clean pass over the prefill history.
         bar_1h = self._build_sliding_1h(st, bar)
         if bar_1h is None:
-            return
+            return  # fewer than sliding_window_bars in the buffer yet
 
-        # 5. Feed the synthetic sliding-1H bar to hourly indicators
         st.sma20.handle_bar(bar_1h)
         st.sma50.handle_bar(bar_1h)
         st.ema20.handle_bar(bar_1h)
@@ -289,9 +298,13 @@ class FourLevelStrategy(Strategy):
         st.rsi.handle_bar(bar_1h)
         st.atr.handle_bar(bar_1h)
 
-        # Re-check indicator readiness after feeding (indicators may need more bars)
+        # Warmup gate — trade only once the slowest indicator (SMA50) is initialized.
         if not self._indicators_ready(st):
-            return
+            return  # still warming, silently ingest
+        if not st.is_warm:
+            st.is_warm = True
+            self.log.info(f"Warmup complete for {iid} "
+                          f"(buffer: {len(st.buffer_15m)} 15m bars)")
 
         # 6. Compute level and raw signal (EXACT same logic as original)
         level, rsi = self._compute_level(st, float(bar_1h.close))
@@ -300,9 +313,16 @@ class FourLevelStrategy(Strategy):
         # 7. Observability counters
         self._counters["evals_total"] += 1
         st.bars_since_last_entry += 1
-        # Update staleness watchdog timestamp and clear any stale alert
-        self._last_eval_utc = self.clock.utc_now()
+        # Update staleness watchdog timestamp and clear any stale alert.
+        # Wall clock (not Nautilus clock) — the watchdog thread compares against it.
+        self._last_eval_utc = datetime.now(timezone.utc)
         self._staleness_alerted = False
+
+        # 7b. Debounce state tracking runs on EVERY evaluation (v3 fix — it used
+        #     to run only inside _check_debounce, i.e. only when flat, so signal
+        #     flips that happened while a position was open were never observed
+        #     and the post-exit re-entry gate acted on stale state).
+        self._update_debounce_state(st, signal)
 
         # 8. Update latest state per instrument (for /status)
         self._latest[iid] = {
@@ -403,40 +423,11 @@ class FourLevelStrategy(Strategy):
         )
 
     # ── warmup ─────────────────────────────────────────────────────────────
-    def _check_warmup(self, st: _InstState) -> bool:
-        """Return True when enough 15m bars are in the buffer + hourly indicators
-        have enough sliding-1H points to be initialized."""
-        buf = st.buffer_15m
-        window_n = self.config.sliding_window_bars
-
-        # Need at least window_n bars to build one sliding-1H bar
-        if len(buf) < window_n:
-            return False
-
-        # Build all available sliding-1H bars from the buffer and feed to indicators.
-        # This catches up historical bars that arrived via request_bars().
-        # We feed sliding-1H bars sequentially to warm the indicators.
-        for i in range(window_n, len(buf) + 1):
-            window = list(buf)[i - window_n:i]
-            bar_1h = Bar(
-                bar_type=st.bar_type_15m,
-                open=window[0].open,
-                high=max(b.high for b in window),
-                low=min(b.low for b in window),
-                close=window[-1].close,
-                volume=Quantity(sum(int(b.volume) for b in window), precision=0),
-                ts_event=window[-1].ts_event,
-                ts_init=window[-1].ts_init,
-            )
-            st.sma20.handle_bar(bar_1h)
-            st.sma50.handle_bar(bar_1h)
-            st.ema20.handle_bar(bar_1h)
-            st.ema50.handle_bar(bar_1h)
-            st.rsi.handle_bar(bar_1h)
-            st.atr.handle_bar(bar_1h)
-
-        # Check if the slowest indicator (SMA50) is initialized
-        return self._indicators_ready(st)
+    # _check_warmup() removed (v3). It re-fed every sliding-1H window in the
+    # buffer on EVERY pre-warm bar — O(n^2) duplicate handle_bar() calls that
+    # corrupted the recursive EMA/RSI/ATR state. Warmup is now a single clean
+    # pass: _process_bar feeds one sliding-1H bar per incoming 15m bar and
+    # gates trading on _indicators_ready().
 
     @staticmethod
     def _indicators_ready(st: _InstState) -> bool:
@@ -470,10 +461,8 @@ class FourLevelStrategy(Strategy):
         Rule: do not open a NEW position in the same direction unless the signal
         state has flipped to FLAT (or opposite) since the last entry AND at least
         MIN_BARS_BETWEEN_ENTRIES bars have passed.
+        (v3: state tracking moved to _process_bar so it runs on every eval.)
         """
-        # Update debounce state tracking first
-        self._update_debounce_state(st, signal)
-
         # First entry ever — always allow
         if st.last_entry_direction is None:
             return True
@@ -705,13 +694,40 @@ class FourLevelStrategy(Strategy):
 
     # ── state snapshot (for the Telegram bot) ────────────────────────────
     def _start_snapshot_thread(self):
-        """Background loop: re-snapshot every _state_interval seconds. Used instead of a
-        Nautilus clock timer (set_timer raises in on_start in this version)."""
+        """Background loop: refresh the on-disk snapshot every _state_interval
+        seconds. Used instead of a Nautilus clock timer (set_timer raises in
+        on_start in this version).
+
+        v3 fix: the thread previously called _write_state(), which read
+        self.clock / self.cache / self.portfolio concurrently with the event
+        loop — Nautilus objects are NOT thread-safe. The thread now only
+        (a) re-persists the snapshot last built on the event-loop side and
+        (b) runs the staleness watchdog on plain wall-clock time."""
         def _loop():
             while not self._snap_stop.wait(self._state_interval):
-                self._write_state()
+                self._refresh_state_from_thread()
         self._snap_thread = threading.Thread(target=_loop, daemon=True)
         self._snap_thread.start()
+
+    def _refresh_state_from_thread(self):
+        """Thread-side refresh. Touches NO Nautilus objects — only the cached
+        snapshot dict, wall-clock time, and the staleness watchdog. Never raises."""
+        try:
+            # Staleness watchdog — this MUST live on the thread: it is the only
+            # code that still runs when bars stop arriving.
+            now = datetime.now(timezone.utc)
+            if self._last_eval_utc is not None and not self._staleness_alerted:
+                age = (now - self._last_eval_utc).total_seconds()
+                if age > self._staleness_threshold_secs:
+                    self._staleness_alerted = True
+                    self._notify(
+                        f"⏰ FX ATS STALE — no data for {int(age / 60)} min. "
+                        f"Gateway may be frozen. Check IB Gateway container."
+                    )
+            if self._snapshot_cache:
+                self._persist_snapshot(self._snapshot_cache)
+        except Exception:
+            pass  # never let the watchdog thread die
 
     def _load_control(self) -> dict:
         """Read the bot's control switches. Fail-open (all enabled) if missing/unreadable —
@@ -745,25 +761,13 @@ class FourLevelStrategy(Strategy):
         """Snapshot live state to STATE_PATH for the Telegram bot. No-op if unset; never raises.
 
         v2 additions: observability counters (non-breaking — ADDED, not removed/renamed).
-        v3 addition: staleness watchdog — Telegram alert when no bars process for
-                     STALENESS_ALERT_SECS (default 600s = 10 min).
+        v3: staleness watchdog moved to _refresh_state_from_thread (it must run
+            when bars STOP arriving, and the thread may not touch Nautilus objects).
+            This method must only be called from Nautilus callbacks (event loop) —
+            it reads self.cache / self.portfolio / self.clock.
         """
         if not self._state_path:
             return
-        # ── Staleness watchdog (v3) ──────────────────────────────────────────
-        if self._last_eval_utc is not None and not self._staleness_alerted:
-            age = (self.clock.utc_now() - self._last_eval_utc).total_seconds()
-            if age > self._staleness_threshold_secs:
-                self._staleness_alerted = True
-                self.log.error(
-                    f"STALE: No bar processed in {int(age)}s "
-                    f"(threshold={self._staleness_threshold_secs}s). "
-                    f"Gateway or data feed may be frozen."
-                )
-                self._notify(
-                    f"⏰ FX ATS STALE — no data for {int(age/60)} min. "
-                    f"Gateway may be frozen. Check IB Gateway container."
-                )
         try:
             signals = {str(iid): v for iid, v in self._latest.items()}
             positions = []
@@ -800,16 +804,26 @@ class FourLevelStrategy(Strategy):
                 # v2 observability counters (ADDED, non-breaking)
                 "counters": self._counters,
             }
-            tmp = self._state_path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(snapshot, f, default=str)
-            os.replace(tmp, self._state_path)
+            self._snapshot_cache = snapshot   # handed to the refresh thread
+            self._persist_snapshot(snapshot)
         except Exception as exc:
             self.log.warning(f"state snapshot failed: {exc}")
+
+    def _persist_snapshot(self, snapshot: dict):
+        """Atomic write of a pre-built snapshot. Thread-safe: pure file IO plus
+        wall-clock — callable from both the event loop and the refresh thread."""
+        try:
+            out = {**snapshot, "ts": datetime.now(timezone.utc).isoformat()}
+            tmp = self._state_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(out, f, default=str)
+            os.replace(tmp, self._state_path)
+        except Exception:
+            pass  # never raise from the persister (may be off-loop)
 
     # ── helpers ────────────────────────────────────────────────────────────
     def _open_position(self, iid: InstrumentId) -> Position | None:
         positions = self.cache.positions_open(instrument_id=iid)
         return positions[0] if positions else None
 
-    # _ready() removed — replaced by _check_warmup / _indicators_ready (v2)
+    # _ready() removed (v2); _check_warmup removed (v3) — see _indicators_ready
